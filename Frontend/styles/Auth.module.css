@@ -1,0 +1,453 @@
+.authContainer {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.authCard {
+  width: 100%;
+  max-width: 900px;
+  max-height: calc(100vh - 40px);
+  height: calc(100vh - 40px);
+  background: #ffffff;
+  border-radius: 24px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  display: flex;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+/* Transition Overlay - Removed for page-like transition */
+.transitionOverlay {
+  display: none;
+}
+
+/* Sections */
+.section {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 30px;
+  position: relative;
+  z-index: 2;
+  overflow: hidden;
+  box-sizing: border-box;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.leftSection,
+.rightSection {
+  transform: translateX(0) translateZ(0);
+  opacity: 1;
+  will-change: transform, opacity;
+  transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Page-like transition: When switching to Sign Up */
+/* Left section (Login form) slides out to the left */
+.authCard.transitioning.signUpMode .leftSection {
+  transform: translateX(-100%) translateZ(0);
+  opacity: 0;
+}
+
+/* Right section (Sign Up form) slides in from the right */
+.authCard.transitioning.signUpMode .rightSection {
+  transform: translateX(0) translateZ(0);
+  opacity: 1;
+}
+
+/* Page-like transition: When switching to Login */
+/* Right section (Welcome Back) slides out to the right */
+.authCard.transitioning:not(.signUpMode) .rightSection {
+  transform: translateX(100%) translateZ(0);
+  opacity: 0;
+}
+
+/* Left section (Login form) slides in from the left */
+.authCard.transitioning:not(.signUpMode) .leftSection {
+  transform: translateX(0) translateZ(0);
+  opacity: 1;
+}
+
+/* Initial states for non-transitioning */
+.authCard:not(.transitioning) .leftSection {
+  transform: translateX(0) translateZ(0);
+  opacity: 1;
+}
+
+.authCard:not(.transitioning) .rightSection {
+  transform: translateX(0) translateZ(0);
+  opacity: 1;
+}
+
+.whiteSection {
+  background: #ffffff;
+  color: #000000;
+}
+
+.blackSection {
+  background: #000000;
+  color: #ffffff;
+}
+
+/* Diagonal Divider */
+.diagonalDivider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  background: #000000;
+  clip-path: polygon(0 0, 55% 0, 45% 100%, 0 100%);
+  transition: clip-path 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: clip-path;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  pointer-events: none;
+}
+
+.dividerLeft {
+  clip-path: polygon(0 0, 55% 0, 45% 100%, 0 100%);
+}
+
+.dividerRight {
+  clip-path: polygon(55% 0, 100% 0, 100% 100%, 45% 100%);
+}
+
+/* Form Content */
+.formContent {
+  width: 100%;
+  max-width: 400px;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  animation: fadeIn 0.5s ease;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.formTitle {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0 0 6px 0;
+  text-align: center;
+  letter-spacing: -1px;
+}
+
+.titleUnderline {
+  width: 50px;
+  height: 3px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  margin: 0 auto 20px;
+  border-radius: 2px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+}
+
+.inputGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.whiteSection .label {
+  color: #374151;
+}
+
+.blackSection .label {
+  color: #ffffff;
+}
+
+.inputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input {
+  width: 100%;
+  padding: 10px 40px 10px 0;
+  border: none;
+  border-bottom: 2px solid #e5e7eb;
+  background: transparent;
+  font-size: 14px;
+  color: #1f2937;
+  outline: none;
+  transition: all 0.3s ease;
+}
+
+.whiteSection .input {
+  color: #1f2937;
+  border-bottom-color: #e5e7eb;
+}
+
+.blackSection .input {
+  color: #ffffff;
+  border-bottom-color: rgba(255, 255, 255, 0.3);
+}
+
+.input::placeholder {
+  color: #9ca3af;
+}
+
+.blackSection .input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.input:focus {
+  border-bottom-color: #667eea;
+}
+
+.inputIcon {
+  position: absolute;
+  right: 0;
+  color: #9ca3af;
+  pointer-events: none;
+  transition: color 0.3s ease;
+  width: 18px;
+  height: 18px;
+}
+
+.blackSection .inputIcon {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.input:focus + .inputIcon,
+.inputWrapper:hover .inputIcon {
+  color: #667eea;
+}
+
+.submitButton {
+  width: 100%;
+  padding: 12px;
+  background: #000000;
+  color: #ffffff;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin-top: 2px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.submitButton:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.submitButton:active {
+  transform: translateY(0);
+}
+
+.switchLink {
+  text-align: center;
+  font-size: 13px;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+.whiteSection .switchLink {
+  color: #6b7280;
+}
+
+.blackSection .switchLink {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.linkButton {
+  background: none;
+  border: none;
+  color: #667eea;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  text-decoration: underline;
+  transition: color 0.3s ease;
+}
+
+.linkButton:hover {
+  color: #764ba2;
+}
+
+/* Welcome Content */
+.welcomeContent {
+  text-align: center;
+  max-width: 400px;
+  padding: 20px;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.welcomeTitle {
+  font-size: 36px;
+  font-weight: 700;
+  margin: 0 0 16px 0;
+  letter-spacing: 1.5px;
+  line-height: 1.2;
+}
+
+.welcomeText {
+  font-size: 14px;
+  line-height: 1.5;
+  opacity: 0.8;
+  margin: 0;
+}
+
+/* Google SSO Button */
+.googleButton {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+  background: #ffffff;
+  border: 2px solid #e5e7eb;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin-top: 4px;
+}
+
+.googleButton:hover {
+  border-color: #667eea;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.googleButton:active {
+  transform: translateY(0);
+}
+
+.googleIcon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .authContainer {
+    padding: 15px;
+  }
+
+  .authCard {
+    flex-direction: column;
+    height: auto;
+    max-height: calc(100vh - 30px);
+    max-width: 500px;
+  }
+
+  .section {
+    padding: 30px 25px;
+    min-height: auto;
+    max-height: 50vh;
+  }
+
+  .diagonalDivider {
+    display: none;
+  }
+
+  .whiteSection,
+  .blackSection {
+    width: 100%;
+  }
+
+  .formTitle {
+    font-size: 28px;
+  }
+
+  .welcomeTitle {
+    font-size: 32px;
+  }
+
+  .form {
+    gap: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .authContainer {
+    padding: 10px;
+  }
+
+  .authCard {
+    max-height: calc(100vh - 20px);
+    border-radius: 16px;
+  }
+
+  .section {
+    padding: 25px 20px;
+    min-height: auto;
+  }
+
+  .formTitle {
+    font-size: 24px;
+  }
+
+  .welcomeTitle {
+    font-size: 28px;
+  }
+
+  .form {
+    gap: 14px;
+  }
+
+  .inputGroup {
+    gap: 4px;
+  }
+
+  .submitButton,
+  .googleButton {
+    padding: 12px;
+    font-size: 14px;
+  }
+}
+
