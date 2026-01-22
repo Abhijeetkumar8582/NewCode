@@ -5,9 +5,10 @@ import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
 import { logPageView, logVideoUpload } from '../lib/activityLogger';
-import { uploadVideo, getStatus, getVideosPanel, deleteUpload, retryUpload, getJobStatus, bulkDeleteUploads, checkOpenAIKeyAvailability } from '../lib/api';
+import { uploadVideo, getStatus, getVideosPanel, deleteUpload, retryUpload, getJobStatus, bulkDeleteUploads } from '../lib/api';
 import dataCache, { CACHE_DURATION } from '../lib/dataCache';
 import { getCurrentUser } from '../lib/auth';
+import { getCookieData, setCookieData } from '../lib/cookieStorage';
 
 export default function ProcessData() {
   const router = useRouter();
@@ -37,12 +38,20 @@ export default function ProcessData() {
   const [viewMode, setViewMode] = useState('list'); // 'list' or 'grid'
   const [sortBy, setSortBy] = useState(null);
   const [filterOpen, setFilterOpen] = useState(false);
-  const [filterData, setFilterData] = useState({
-    user: null,
-    fileName: '',
-    status: null,
-    date: null
-  });
+  // Use individual state values instead of object to prevent unnecessary re-renders
+  const [filterUser, setFilterUser] = useState(null);
+  const [filterFileName, setFilterFileName] = useState('');
+  const [filterStatus, setFilterStatus] = useState(null);
+  const [filterDate, setFilterDate] = useState(null);
+  
+  // Memoize filterData object to prevent unnecessary fetchVideos recreation
+  const filterData = useMemo(() => ({
+    user: filterUser,
+    fileName: filterFileName,
+    status: filterStatus,
+    date: filterDate
+  }), [filterUser, filterFileName, filterStatus, filterDate]);
+  
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -58,6 +67,7 @@ export default function ProcessData() {
   const [processingStatus, setProcessingStatus] = useState(null);
   const [statusPollingInterval, setStatusPollingInterval] = useState(null);
   const backgroundRefreshIntervalRef = useRef(null);
+  const currentPageForIntervalRef = useRef(1); // Track current page for background refresh interval
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -65,17 +75,18 @@ export default function ProcessData() {
   const [totalRecords, setTotalRecords] = useState(0);
   const pageSize = 10;
   const [isInitialMount, setIsInitialMount] = useState(true);
+  const hasMountedRef = useRef(false); // Track if component has mounted
+  const prevFiltersRef = useRef({ status: null, fileName: '' }); // Track previous filter values to prevent unnecessary refetches
+  const hasInitialFetchedRef = useRef(false); // Track if initial fetch completed
+  const statusCheckIntervalRef = useRef(null); // Track 2-minute status check interval
   
   // Validation state
   const [nameError, setNameError] = useState(false);
-  const [openAIKeyError, setOpenAIKeyError] = useState(null);
   const [showTransferDialog, setShowTransferDialog] = useState(false);
   const [transferProgress, setTransferProgress] = useState(0);
   const transferDialogTimeoutRef = useRef(null);
   
-  // OpenAI key availability state
-  const [hasOpenAIKey, setHasOpenAIKey] = useState(null); // null = not checked yet, false = no key, true = has key
-  const [checkingOpenAIKey, setCheckingOpenAIKey] = useState(true);
+  // OpenAI key validation removed - backend handles API key configuration
   
   // Dropdown and status view state
   const [openDropdownId, setOpenDropdownId] = useState(null);
@@ -85,67 +96,7 @@ export default function ProcessData() {
   const [selectedItems, setSelectedItems] = useState(new Set());
   const [selectAll, setSelectAll] = useState(false);
 
-  // Function to check OpenAI key availability (reusable)
-  const checkOpenAIKey = useCallback(async () => {
-    try {
-      console.log('[OpenAI Check] Starting check...');
-      setCheckingOpenAIKey(true);
-      const keyCheck = await checkOpenAIKeyAvailability();
-      const hasKey = Boolean(keyCheck?.has_key);
-      console.log('[OpenAI Check] Result:', { has_key: hasKey, fullResponse: keyCheck });
-      setHasOpenAIKey(hasKey);
-      if (!hasKey) {
-        const errorMsg = keyCheck?.message || "No OpenAI API key found. Please add your API key in Settings to process videos.";
-        setOpenAIKeyError(errorMsg);
-        console.log('[OpenAI Check] No key found, setting error message');
-      } else {
-        setOpenAIKeyError(null);
-        console.log('[OpenAI Check] Key found, clearing error');
-      }
-    } catch (error) {
-      console.error('[OpenAI Check] Error:', error);
-      // If check fails, assume no key to be safe
-      setHasOpenAIKey(false);
-      setOpenAIKeyError("Failed to verify OpenAI API key. Please try again or add your API key in Settings.");
-    } finally {
-      setCheckingOpenAIKey(false);
-      console.log('[OpenAI Check] Check completed');
-    }
-  }, []);
-
-  useEffect(() => {
-    // Log page view
-    logPageView('Process Data');
-    
-    // OpenAI key check removed - backend handles API key configuration
-    // checkOpenAIKey();
-    
-    // Fetch videos from API on initial load
-    fetchVideos(1);
-    setIsInitialMount(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkOpenAIKey]);
-
-  // Re-check OpenAI key when window regains focus (user might have added key in another tab)
-  useEffect(() => {
-    const handleFocus = () => {
-      checkOpenAIKey();
-    };
-    
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, [checkOpenAIKey]);
-
-  // Refetch when page changes (skip initial mount)
-  useEffect(() => {
-    if (!isInitialMount) {
-      fetchVideos(currentPage);
-      // Clear selection when page changes
-      setSelectedItems(new Set());
-      setSelectAll(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage]);
+  // OpenAI key check function removed - backend handles API key configuration
 
   // Update select all state when tableData or selection changes (memoized)
   const selectAllState = useMemo(() => {
@@ -161,12 +112,67 @@ export default function ProcessData() {
     setSelectAll(selectAllState);
   }, [selectAllState]);
 
-  const getCacheKey = (page, status, fileName) => {
+  // Memoize cache key function
+  const getCacheKey = useCallback((page, status, fileName) => {
     return `process-data:videos:page:${page}:status:${status || 'all'}:fileName:${fileName || 'all'}`;
-  };
+  }, []);
 
-  const fetchVideos = async (page = currentPage, forceRefresh = false, silent = false) => {
-    const cacheKey = getCacheKey(page, filterData.status, filterData.fileName);
+  // Helper function to compare videos and detect changes
+  const compareVideos = useCallback((oldVideos, newVideos) => {
+    const oldMap = new Map(oldVideos.map(v => [v.id, v]));
+    const newMap = new Map(newVideos.map(v => [v.id, v]));
+    
+    const added = newVideos.filter(v => !oldMap.has(v.id));
+    const removed = oldVideos.filter(v => !newMap.has(v.id));
+    const changed = newVideos.filter(v => {
+      const old = oldMap.get(v.id);
+      return old && (old.status !== v.status || old.lastActivity !== v.lastActivity);
+    });
+    const unchanged = newVideos.filter(v => {
+      const old = oldMap.get(v.id);
+      return old && old.status === v.status && old.lastActivity === v.lastActivity;
+    });
+    
+    return { added, removed, changed, unchanged };
+  }, []);
+
+  // Ref to track if fetch is in progress to prevent duplicate calls
+  const fetchInProgressRef = useRef(false);
+  const lastFetchParamsRef = useRef({ page: null, status: null, fileName: null });
+  const activeRequestControllerRef = useRef(null); // Track active request for cancellation
+
+  // Memoize fetchVideos with useCallback to prevent unnecessary re-creations
+  const fetchVideos = useCallback(async (page = currentPage, forceRefresh = false, silent = false) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:145',message:'fetchVideos called',data:{page,forceRefresh,silent,currentPage,filterStatus,filterFileName,hasInitialFetched:hasInitialFetchedRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    // Prevent duplicate concurrent calls with same parameters
+    const cacheKey = getCacheKey(page, filterStatus, filterFileName);
+    const fetchParams = { page, status: filterStatus, fileName: filterFileName };
+    
+    // Check if same fetch is already in progress
+    if (fetchInProgressRef.current) {
+      const lastParams = lastFetchParamsRef.current;
+      if (lastParams.page === fetchParams.page && 
+          lastParams.status === fetchParams.status && 
+          lastParams.fileName === fetchParams.fileName) {
+        console.log('[fetchVideos] Duplicate call prevented:', fetchParams);
+        return;
+      }
+      // Cancel previous request if parameters changed
+      if (activeRequestControllerRef.current) {
+        activeRequestControllerRef.current.abort();
+        activeRequestControllerRef.current = null;
+      }
+    }
+
+    // Create abort controller for this request
+    const abortController = new AbortController();
+    activeRequestControllerRef.current = abortController;
+
+    // Mark fetch as in progress
+    fetchInProgressRef.current = true;
+    lastFetchParamsRef.current = fetchParams;
     
     // Get cached data for comparison
     const cachedData = dataCache.get(cacheKey);
@@ -185,14 +191,39 @@ export default function ProcessData() {
         setLoading(true);
       }
       
-      const response = await getVideosPanel({ 
-        page: page, 
-        page_size: pageSize,
-        sort_by: 'updated_at',
-        sort_order: 'desc',
-        status: filterData.status || null,
-        application_name: filterData.fileName || null
+      // Add timeout to prevent requests from hanging indefinitely
+      let timeoutId;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          if (activeRequestControllerRef.current) {
+            activeRequestControllerRef.current.abort(); // Abort the request on timeout
+          }
+          reject(new Error('Request timeout'));
+        }, 8000); // 8 second timeout
       });
+      
+      const response = await Promise.race([
+        getVideosPanel({ 
+          page: page, 
+          page_size: pageSize,
+          sort_by: 'updated_at',
+          sort_order: 'desc',
+          status: filterStatus || null,
+          application_name: filterFileName || null
+        }, activeRequestControllerRef.current?.signal).catch(err => {
+          // If request was aborted, don't treat as error
+          if (err.name === 'AbortError' || err.message === 'canceled' || err.message === 'Request cancelled') {
+            throw new Error('Request cancelled');
+          }
+          throw err;
+        }),
+        timeoutPromise
+      ]);
+      
+      // Clear timeout if request completed successfully
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       
       if (response && response.videos) {
         // Map API response to table format
@@ -214,12 +245,15 @@ export default function ProcessData() {
             return `${dateStr}, ${timeStr}`;
           };
 
-          // Get first letter of name for recipient avatar
-          const firstLetter = video.name ? video.name.charAt(0).toUpperCase() : 'U';
+          // Use original_input (user-entered name) for display, fallback to name if not available
+          const displayName = video.original_input || video.name || 'Untitled Video';
+          // Get first letter of display name for recipient avatar
+          const firstLetter = displayName ? displayName.charAt(0).toUpperCase() : 'U';
           
           return {
             id: video.id,
-            name: video.name,
+            name: displayName, // Use original_input as the display name
+            original_input: video.original_input, // Keep original_input for reference
             created: formatDate(createdDate),
             lastActivity: formatDate(updatedDate),
             recipients: [firstLetter], // Show first letter as avatar
@@ -300,6 +334,22 @@ export default function ProcessData() {
           totalPages
         }, CACHE_DURATION.VIDEO_LIST);
         
+        // Store in cookie for persistence across page refreshes (for all pages)
+        if (!silent) {
+          try {
+            const cookieKey = `process_data_videos_page_${page}`;
+            setCookieData(cookieKey, {
+              videos: mappedData,
+              totalRecords,
+              totalPages,
+              timestamp: Date.now(),
+              page: page
+            }, 1); // Store for 1 day
+          } catch (error) {
+            console.error('Failed to store data in cookie:', error);
+          }
+        }
+        
       } else {
         // Empty response - only update if we had data before
         if (cachedData && cachedData.videos && cachedData.videos.length > 0) {
@@ -314,19 +364,131 @@ export default function ProcessData() {
         }
       }
     } catch (error) {
-      console.error('Failed to fetch videos:', error);
+      // Don't log cancellation errors
+      if (error.message !== 'Request cancelled') {
+        console.error('Failed to fetch videos:', error);
+      }
       // Only update on error if we don't have cached data
-      if (!cachedData) {
+      if (!cachedData && error.message !== 'Request cancelled') {
         setTableData([]);
         setTotalRecords(0);
         setTotalPages(1);
       }
+      // Don't retry on timeout or cancellation - prevents request queue buildup
     } finally {
+      // Always reset fetch in progress flag, even on error/timeout/cancellation
+      fetchInProgressRef.current = false;
+      activeRequestControllerRef.current = null;
       if (!silent) {
         setLoading(false);
       }
     }
-  };
+  }, [currentPage, filterStatus, filterFileName, pageSize, getCacheKey]); // Use individual filter values, not filterData object
+
+  // Initial mount effect - only run once on mount
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:386',message:'Initial mount effect running',data:{isInitialMount,hasInitialFetched:hasInitialFetchedRef.current,currentPage},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+    // Log page view
+    logPageView('Process Data');
+    
+    // Only fetch on true initial mount (first render) and if not already fetched
+    if (isInitialMount && !hasInitialFetchedRef.current) {
+      // Check cookie cache first for current page
+      const cookieKey = `process_data_videos_page_${currentPage}`;
+      const cookieData = getCookieData(cookieKey);
+      if (cookieData && cookieData.videos && cookieData.timestamp) {
+        // Check if cookie data is still fresh (less than 5 minutes old)
+        const cookieAge = Date.now() - cookieData.timestamp;
+        const maxAge = 5 * 60 * 1000; // 5 minutes
+        if (cookieAge < maxAge) {
+          // Load from cookie cache
+          setTableData(cookieData.videos);
+          setTotalRecords(cookieData.totalRecords || 0);
+          setTotalPages(cookieData.totalPages || 1);
+          setLoading(false);
+          setIsInitialMount(false);
+          hasInitialFetchedRef.current = true;
+          // Fetch fresh data in background (silent) to check for updates
+          fetchVideos(currentPage, false, true).catch(() => {});
+          return;
+        }
+      }
+      
+      // No valid cookie cache, fetch from API
+      fetchVideos(currentPage).then(() => {
+        hasInitialFetchedRef.current = true;
+      });
+      setIsInitialMount(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty dependency array - only run once on mount
+
+  // Refetch when filters change (skip initial mount) - reset to page 1
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:423',message:'Filter change effect running',data:{hasInitialFetched:hasInitialFetchedRef.current,hasMounted:hasMountedRef.current,filterStatus,filterFileName,prevStatus:prevFiltersRef.current.status,prevFileName:prevFiltersRef.current.fileName},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+    // Don't run until initial fetch is complete
+    if (!hasInitialFetchedRef.current) {
+      return;
+    }
+    
+    if (!hasMountedRef.current) {
+      // Initialize prev filters on first mount
+      prevFiltersRef.current = { status: filterStatus, fileName: filterFileName };
+      return; // Skip first render (handled by initial mount effect)
+    }
+    
+    // Check if filters actually changed
+    const filtersChanged = 
+      prevFiltersRef.current.status !== filterStatus || 
+      prevFiltersRef.current.fileName !== filterFileName;
+    
+    if (!filtersChanged) {
+      return; // Filters haven't actually changed, skip refetch
+    }
+    
+    // Update prev filters
+    prevFiltersRef.current = { status: filterStatus, fileName: filterFileName };
+    
+    // Reset to page 1 when filters change
+    // The page change effect below will handle the refetch
+    if (currentPage !== 1) {
+      setCurrentPage(1);
+    } else {
+      // If already on page 1, refetch directly
+      fetchVideos(1);
+    }
+    // Clear selection when filters change
+    setSelectedItems(new Set());
+    setSelectAll(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterStatus, filterFileName]); // Only watch for filter value changes, not fetchVideos or currentPage
+
+  // Refetch when page changes (skip initial mount) - use ref to track if mounted
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:456',message:'Page change effect running',data:{hasInitialFetched:hasInitialFetchedRef.current,hasMounted:hasMountedRef.current,currentPage},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
+    // Don't run until initial fetch is complete
+    if (!hasInitialFetchedRef.current) {
+      return;
+    }
+    
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      return; // Skip first render (handled by initial mount effect)
+    }
+    
+    // Only fetch when page actually changes (not on initial mount)
+    fetchVideos(currentPage);
+    // Clear selection when page changes
+    setSelectedItems(new Set());
+    setSelectAll(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage]); // Only depend on currentPage
 
   // Sample users for dropdown
   const users = [
@@ -467,10 +629,16 @@ export default function ProcessData() {
     console.log('Edit item:', id);
   };
 
-  const handleCreateNew = async () => {
+  const handleCreateNew = useCallback((e) => {
+    // Prevent any default behavior or event propagation
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     // OpenAI key check removed - backend handles API key configuration
+    // Only open dialog, don't trigger any API calls or refreshes
     setDialogOpen(true);
-  };
+  }, []); // Empty dependency array - function never changes
 
   const handleCancel = () => {
     setDialogOpen(false);
@@ -528,7 +696,6 @@ export default function ProcessData() {
 
   const handleStart = async () => {
     // Clear previous errors
-    setOpenAIKeyError(null);
     setNameError(false);
     
     // Validate name field
@@ -618,70 +785,23 @@ export default function ProcessData() {
         // Close transfer dialog
         setShowTransferDialog(false);
         
-        // If we have multiple files, just close dialog and refresh list
-        // Don't show processing dialog for multiple files (they're in queue)
-        if (filesToUpload.length > 1) {
-          setFormData({ name: '', link: '', file: null, files: [], fileUrl: '' });
-          setIsUploading(false);
-          setUploadProgress(0);
-          setTransferProgress(0);
-          setNameError(false);
-          
-          // Refresh the list to show all uploaded videos
-          dataCache.clearByPattern('process-data:videos:');
-          dataCache.clearByPattern('document:videos:');
-          dataCache.clearByPattern('dashboard:');
-          await fetchVideos();
-        } else {
-          // Single file - show processing dialog
-          setNewEntryId(lastEntryId);
-          setCurrentJobId(lastJobId);
-          setProcessingOpen(true);
-          setCurrentStep(0);
-          setFormData({ name: '', link: '', file: null, files: [], fileUrl: '' });
-          setIsUploading(false);
-          setUploadProgress(0);
-          setTransferProgress(0);
-          setNameError(false);
-          
-          // Initialize processing status immediately
-          setProcessingStatus({
-            status: 'processing',
-            message: 'Video uploaded successfully. Processing has started...',
-            current_step: 'upload',
-            step_progress: { upload: 'completed' },
-            progress: 0
-          });
-          
-          // Start polling for status if job_id is available
-          if (lastJobId) {
-            setTimeout(() => {
-              startStatusPolling(lastJobId);
-            }, 500);
-          }
-        }
+        // Clear form and reset state
+        setFormData({ name: '', link: '', file: null, files: [], fileUrl: '' });
+        setIsUploading(false);
+        setUploadProgress(0);
+        setTransferProgress(0);
+        setNameError(false);
         
-        // Invalidate cache and refresh list in background (non-blocking)
+        // Invalidate cache once
         dataCache.clearByPattern('process-data:videos:');
         dataCache.clearByPattern('document:videos:');
         dataCache.clearByPattern('dashboard:');
         
-        // Refresh the list in background
-        fetchVideos().catch(err => {
-          console.error('Background refresh failed:', err);
-        });
+        // Single refresh to show uploaded videos (only once)
+        await fetchVideos(currentPage, true); // Force refresh to show new uploads
         
-        // Force refresh after delays
-        // Single delayed refresh after upload (removed multiple refreshes)
-        // The background refresh will handle ongoing updates
-        setTimeout(async () => {
-          try {
-            dataCache.clearByPattern('process-data:videos:');
-            await fetchVideos(currentPage);
-          } catch (err) {
-            console.error('Delayed refresh failed:', err);
-          }
-        }, 3000); // Single refresh after 3 seconds
+        // Don't show processing dialog - just upload and refresh the list
+        // Processing happens in the background and status updates will be reflected in the table
       } catch (error) {
         console.error('Upload failed:', error);
         // Clear timeout on error
@@ -704,22 +824,8 @@ export default function ProcessData() {
           } else if (error.response.status === 413) {
             errorMessage = 'File is too large. Please choose a smaller file.';
           } else if (error.response.status === 400) {
-            // Check if it's an OpenAI key error
-            const detail = error.response.data?.detail || '';
-            if (detail.toLowerCase().includes('openai') || detail.toLowerCase().includes('api key')) {
-              // This is an OpenAI key error - show it in the dialog
-              setOpenAIKeyError(errorMessage);
-              setDialogOpen(true); // Reopen dialog to show error
-              // Scroll to error message
-              setTimeout(() => {
-                const errorElement = document.querySelector(`[data-openai-error]`);
-                if (errorElement) {
-                  errorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-              }, 100);
-              return; // Don't show alert, error is already displayed
-            }
-            errorMessage = detail || 'Invalid file. Please check the file format and try again.';
+            // Backend handles API key validation - show error message from server
+            errorMessage = error.response.data?.detail || 'Invalid file. Please check the file format and try again.';
           }
         } else if (error.request) {
           // Request was made but no response received
@@ -780,8 +886,8 @@ export default function ProcessData() {
           page_size: pageSize,
           sort_by: 'updated_at',
           sort_order: 'desc',
-          status: filterData.status || null,
-          application_name: filterData.fileName || null
+          status: filterStatus || null,
+          application_name: filterFileName || null
         });
         
         if (response && response.videos) {
@@ -902,14 +1008,13 @@ export default function ProcessData() {
             }
           } else {
             // No processing videos found, stop polling
+            // Do NOT call fetchVideos() here - it would update tableData and retrigger the effect
+            // The 2-minute checkStatusAndUpdate interval will handle status updates
             if (intervalRef.current) {
               clearInterval(intervalRef.current);
               intervalRef.current = null;
               setStatusPollingInterval(null);
             }
-            
-            // Refresh the list to show final status
-            await fetchVideos();
           }
         }
       } catch (error) {
@@ -941,6 +1046,138 @@ export default function ProcessData() {
     setCurrentJobId(jobId);
     startProcessingVideoPolling();
   };
+
+  // Check status and update only changed items (runs every 2 minutes)
+  const checkStatusAndUpdate = useCallback(async () => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:1065',message:'checkStatusAndUpdate called',data:{page:currentPageForIntervalRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+    try {
+      const page = currentPageForIntervalRef.current;
+      
+      // Fetch fresh data from API
+      const response = await getVideosPanel({ 
+        page: page, 
+        page_size: pageSize,
+        sort_by: 'updated_at',
+        sort_order: 'desc',
+        status: filterStatus || null,
+        application_name: filterFileName || null
+      });
+      
+      if (!response || !response.videos) {
+        return; // No data, skip update
+      }
+      
+      // Map API response to table format (same as fetchVideos)
+      const mappedData = response.videos.map((video) => {
+        const createdDate = new Date(video.created_at);
+        const updatedDate = new Date(video.updated_at);
+        
+        const formatDate = (date) => {
+          const dateStr = date.toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric', 
+            year: 'numeric' 
+          });
+          const timeStr = date.toLocaleTimeString('en-US', { 
+            hour: 'numeric', 
+            minute: '2-digit', 
+            hour12: true 
+          });
+          return `${dateStr}, ${timeStr}`;
+        };
+
+        const displayName = video.original_input || video.name || 'Untitled Video';
+        const firstLetter = displayName ? displayName.charAt(0).toUpperCase() : 'U';
+        
+        return {
+          id: video.id,
+          name: displayName,
+          original_input: video.original_input,
+          created: formatDate(createdDate),
+          lastActivity: formatDate(updatedDate),
+          recipients: [firstLetter],
+          status: video.status || 'uploaded',
+          video_file_number: video.video_file_number,
+          job_id: video.job_id || null
+        };
+      });
+      
+      // Get cookie data for current page
+      const cookieKey = `process_data_videos_page_${page}`;
+      const cookieData = getCookieData(cookieKey);
+      
+      // Update pagination info
+      const totalRecords = response.total !== undefined ? response.total : 0;
+      const totalPages = Math.ceil(totalRecords / pageSize);
+      
+      if (cookieData && cookieData.videos) {
+        // Compare cookie data with API response
+        const comparison = compareVideos(cookieData.videos, mappedData);
+        
+        // Only update if there are changes
+        if (comparison.added.length > 0 || comparison.removed.length > 0 || comparison.changed.length > 0) {
+          // Update state with changes only
+          setTableData(prevData => {
+            // Create a map of existing data for quick lookup
+            const existingMap = new Map(prevData.map(v => [v.id, v]));
+            
+            // Remove deleted videos
+            comparison.removed.forEach(video => {
+              existingMap.delete(video.id);
+            });
+            
+            // Update changed videos
+            comparison.changed.forEach(video => {
+              existingMap.set(video.id, video);
+            });
+            
+            // Add new videos
+            comparison.added.forEach(video => {
+              existingMap.set(video.id, video);
+            });
+            
+            // Convert back to array and maintain order (new videos first, then by lastActivity)
+            const updatedArray = Array.from(existingMap.values());
+            // Sort by lastActivity descending (most recent first)
+            updatedArray.sort((a, b) => {
+              const dateA = new Date(a.lastActivity);
+              const dateB = new Date(b.lastActivity);
+              return dateB - dateA;
+            });
+            
+            return updatedArray;
+          });
+          
+          // Update pagination if needed
+          setTotalRecords(totalRecords);
+          setTotalPages(totalPages);
+        }
+      } else {
+        // No cookie data, update everything
+        setTableData(mappedData);
+        setTotalRecords(totalRecords);
+        setTotalPages(totalPages);
+      }
+      
+      // Always update cookies with fresh data
+      setCookieData(cookieKey, {
+        videos: mappedData,
+        totalRecords,
+        totalPages,
+        timestamp: Date.now(),
+        page: page
+      }, 1);
+      
+    } catch (error) {
+      // Silent fail - don't disrupt user experience
+      // Only log if it's not a cancellation
+      if (error.message !== 'Request cancelled' && error.name !== 'AbortError') {
+        console.error('Status check failed:', error);
+      }
+    }
+  }, [compareVideos, filterStatus, filterFileName, pageSize]);
   
   // Cleanup polling on unmount or when processing closes
   useEffect(() => {
@@ -948,9 +1185,9 @@ export default function ProcessData() {
       if (statusPollingInterval) {
         clearInterval(statusPollingInterval);
       }
-      if (backgroundRefreshIntervalRef.current) {
-        clearInterval(backgroundRefreshIntervalRef.current);
-        backgroundRefreshIntervalRef.current = null;
+      if (statusCheckIntervalRef.current) {
+        clearInterval(statusCheckIntervalRef.current);
+        statusCheckIntervalRef.current = null;
       }
       if (transferDialogTimeoutRef.current) {
         clearTimeout(transferDialogTimeoutRef.current);
@@ -979,17 +1216,62 @@ export default function ProcessData() {
     }
   }, [processingOpen, statusPollingInterval, currentPage, currentJobId]);
 
-  // Smart background refresh: only refresh when needed, with intelligent intervals
-  // Also start unified polling for processing videos
+  // Track previous processing count to avoid unnecessary interval recreation
+  const prevProcessingCountRef = useRef(0);
+  
+  // Memoize processing items count to avoid unnecessary effect re-runs
+  // Only count items with status "processing" (not "uploaded")
+  const processingCount = useMemo(() => {
+    return tableData.filter(item => 
+      item.status === 'processing'
+    ).length;
+  }, [tableData]);
+
+  // 2-minute status check: runs every 2 minutes to check for status updates
+  // Compares cookies with API response and only updates changed items
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:1242',message:'Status check effect running',data:{hasInitialFetched:hasInitialFetchedRef.current,currentPage,hasInterval:!!statusCheckIntervalRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+    // Only start interval after initial fetch is complete
+    if (!hasInitialFetchedRef.current) {
+      return;
+    }
+    
+    // Clear any existing interval first
+    if (statusCheckIntervalRef.current) {
+      clearInterval(statusCheckIntervalRef.current);
+      statusCheckIntervalRef.current = null;
+    }
+    
+    // Update the page ref to current page
+    currentPageForIntervalRef.current = currentPage;
+    
+    // Set up 2-minute status check interval
+    const interval = setInterval(() => {
+      checkStatusAndUpdate();
+    }, 120000); // 2 minutes = 120000ms
+
+    statusCheckIntervalRef.current = interval;
+
+    return () => {
+      // Cleanup on unmount or when dependencies change
+      if (statusCheckIntervalRef.current) {
+        clearInterval(statusCheckIntervalRef.current);
+        statusCheckIntervalRef.current = null;
+      }
+    };
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:1289',message:'Status check effect dependencies changed',data:{currentPage,hasCheckStatusAndUpdate:!!checkStatusAndUpdate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+  }, [currentPage, checkStatusAndUpdate, hasInitialFetchedRef]);
+
+  // Start unified polling for processing videos (separate from status check)
   useEffect(() => {
     // Check if there are any processing items
-    const processingItems = tableData.filter(item => 
-      item.status === 'processing' || item.status === 'uploaded'
-    );
-    const hasProcessingItems = processingItems.length > 0;
+    const hasProcessingItems = processingCount > 0;
     
     // Start unified polling if there are processing videos and polling is not already active
-    // Use a ref to track if polling is active to avoid multiple intervals
     if (hasProcessingItems && !statusPollingInterval) {
       startProcessingVideoPolling();
     } else if (!hasProcessingItems && statusPollingInterval) {
@@ -997,46 +1279,7 @@ export default function ProcessData() {
       clearInterval(statusPollingInterval);
       setStatusPollingInterval(null);
     }
-
-    // Clear any existing interval first
-    if (backgroundRefreshIntervalRef.current) {
-      clearInterval(backgroundRefreshIntervalRef.current);
-      backgroundRefreshIntervalRef.current = null;
-    }
-
-    if (hasProcessingItems) {
-      // Use adaptive refresh interval based on number of processing items
-      // More items = slightly more frequent, but still reasonable
-      const refreshInterval = Math.max(10000, 15000 - (processingItems.length * 1000)); // 10-15 seconds
-      
-      // Set up smart background refresh
-      // fetchVideos will automatically detect changes and only update table if needed
-      const interval = setInterval(async () => {
-        try {
-          // Fetch fresh data silently (won't show loading, will only update if changes detected)
-          // fetchVideos will compare with cache and only update table if there are changes
-          await fetchVideos(currentPage, false, true); // silent mode - no loading indicator, change detection enabled
-        } catch (error) {
-          console.error('Background refresh failed:', error);
-        }
-      }, refreshInterval);
-
-      backgroundRefreshIntervalRef.current = interval;
-
-      return () => {
-        if (backgroundRefreshIntervalRef.current) {
-          clearInterval(backgroundRefreshIntervalRef.current);
-          backgroundRefreshIntervalRef.current = null;
-        }
-      };
-    } else {
-      // No processing items - stop background refresh completely
-      if (backgroundRefreshIntervalRef.current) {
-        clearInterval(backgroundRefreshIntervalRef.current);
-        backgroundRefreshIntervalRef.current = null;
-      }
-    }
-  }, [tableData, currentPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [processingCount, statusPollingInterval]);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -1068,11 +1311,7 @@ export default function ProcessData() {
     if (name === 'name' && nameError) {
       setNameError(false);
     }
-    // Clear OpenAI key error when user makes changes
-    // OpenAI key error check removed
-    if (false && openAIKeyError) {
-      setOpenAIKeyError(null);
-    }
+    // OpenAI key error check removed - validation now handled in backend
   };
 
   const getStatusClass = (status) => {
@@ -1171,7 +1410,7 @@ export default function ProcessData() {
 
   const handleDateSelect = (date) => {
     setSelectedDate(date);
-    setFilterData({ ...filterData, date });
+    setFilterDate(date);
     setDatePickerOpen(false);
   };
 
@@ -1282,6 +1521,7 @@ export default function ProcessData() {
             <h1 className={styles.processDataTitle}>Process Data</h1>
             <div className={styles.headerRight}>
               <button 
+                type="button"
                 className={styles.createButton} 
                 onClick={handleCreateNew}
               >
@@ -1370,8 +1610,8 @@ export default function ProcessData() {
                         setDatePickerOpen(false);
                       }}
                     >
-                      <span className={filterData.user ? styles.filterSelectedValue : styles.filterPlaceholder}>
-                        {filterData.user || '--Please select an option--'}
+                      <span className={filterUser ? styles.filterSelectedValue : styles.filterPlaceholder}>
+                        {filterUser || '--Please select an option--'}
                       </span>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <polyline points={userDropdownOpen ? "18 15 12 9 6 15" : "6 9 12 15 18 9"}></polyline>
@@ -1401,12 +1641,12 @@ export default function ProcessData() {
                                 key={index}
                                 className={styles.filterDropdownItem}
                                 onClick={() => {
-                                  setFilterData({ ...filterData, user });
+                                  setFilterUser(user);
                                   setUserDropdownOpen(false);
                                   setUserSearchQuery('');
                                 }}
                               >
-                                <input type="checkbox" checked={filterData.user === user} readOnly />
+                                <input type="checkbox" checked={filterUser === user} readOnly />
                                 <span>{user}</span>
                               </div>
                             ))}
@@ -1423,8 +1663,8 @@ export default function ProcessData() {
                     type="text"
                     className={styles.filterInput}
                     placeholder="Enter file name"
-                    value={filterData.fileName}
-                    onChange={(e) => setFilterData({ ...filterData, fileName: e.target.value })}
+                    value={filterFileName}
+                    onChange={(e) => setFilterFileName(e.target.value)}
                   />
                 </div>
 
@@ -1440,8 +1680,8 @@ export default function ProcessData() {
                         setDatePickerOpen(false);
                       }}
                     >
-                      <span className={filterData.status ? styles.filterSelectedValue : styles.filterPlaceholder}>
-                        {filterData.status || '--Please select an option--'}
+                      <span className={filterStatus ? styles.filterSelectedValue : styles.filterPlaceholder}>
+                        {filterStatus || '--Please select an option--'}
                       </span>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <polyline points={statusDropdownOpen ? "18 15 12 9 6 15" : "6 9 12 15 18 9"}></polyline>
@@ -1455,11 +1695,11 @@ export default function ProcessData() {
                               key={index}
                               className={styles.filterDropdownItem}
                               onClick={() => {
-                                setFilterData({ ...filterData, status });
+                                setFilterStatus(status);
                                 setStatusDropdownOpen(false);
                               }}
                             >
-                              <input type="checkbox" checked={filterData.status === status} readOnly />
+                              <input type="checkbox" checked={filterStatus === status} readOnly />
                               <span>{status}</span>
                             </div>
                           ))}
@@ -1525,7 +1765,7 @@ export default function ProcessData() {
                   <th>Last Activity</th>
                   <th>Recipients</th>
                   <th>Status</th>
-                  <th></th>
+                  <th style={{ width: '150px', minWidth: '150px', maxWidth: '150px' }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -1768,76 +2008,7 @@ export default function ProcessData() {
                   {nameError && (
                     <div className={styles.errorMessage}>Name is required</div>
                   )}
-<<<<<<< HEAD
                   {/* OpenAI API Key Error Display - Removed */}
-=======
-                  {openAIKeyError && (
-                    <div 
-                      data-openai-error
-                      className={styles.errorMessage} 
-                      style={{
-                        marginTop: '12px',
-                        marginBottom: '12px',
-                        padding: '16px',
-                        backgroundColor: '#fef2f2',
-                        border: '2px solid #fecaca',
-                        borderRadius: '8px',
-                        color: '#991b1b',
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: '12px',
-                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)'
-                      }}
-                    >
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, marginTop: '2px' }}>
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="12" y1="8" x2="12" y2="12"></line>
-                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
-                      </svg>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: '700', marginBottom: '8px', fontSize: '16px' }}>
-                          OpenAI API Key Required
-                        </div>
-                        <div style={{ fontSize: '14px', marginBottom: '12px', lineHeight: '1.5' }}>
-                          {openAIKeyError}
-                        </div>
-                        <div style={{ 
-                          padding: '12px', 
-                          backgroundColor: '#fff', 
-                          borderRadius: '6px',
-                          border: '1px solid #fecaca',
-                          marginBottom: '8px'
-                        }}>
-                          <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: '#7f1d1d' }}>
-                            To upload and process videos:
-                          </div>
-                          <div style={{ fontSize: '13px', color: '#991b1b', lineHeight: '1.6' }}>
-                            1. Go to Settings page<br/>
-                            2. Find the &quot;OpenAI API Key&quot; section<br/>
-                            3. Enter your OpenAI API key (starts with sk-)<br/>
-                            4. Click &quot;Save&quot; to store your key
-                          </div>
-                        </div>
-                        <Link 
-                          href="/settings" 
-                          style={{ 
-                            display: 'inline-block',
-                            padding: '8px 16px',
-                            backgroundColor: '#991b1b',
-                            color: '#fff',
-                            textDecoration: 'none',
-                            borderRadius: '6px',
-                            fontSize: '14px',
-                            fontWeight: '600',
-                            marginTop: '8px'
-                          }}
-                        >
-                          Go to Settings to Add API Key →
-                        </Link>
-                      </div>
-                    </div>
-                  )}
->>>>>>> 5c508a052f7c950dd7f055669a56ce6dfb935771
                 </div>
 
                 {/* File Upload Area - Hide when URL is entered */}

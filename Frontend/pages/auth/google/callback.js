@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { setAuthData } from '../../../lib/auth';
-import prefetchService from '../../lib/prefetchService';
+import prefetchService from '../../../lib/prefetchService';
 
 export default function GoogleCallback() {
   const router = useRouter();

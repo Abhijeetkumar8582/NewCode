@@ -702,6 +702,7 @@
   overflow: hidden;
   border: 1px solid #e5e7eb;
   margin-top: 15px;
+  position: relative;
 }
 
 .table {
@@ -2558,6 +2559,17 @@
   width: 100%;
   border-collapse: collapse;
   background-color: #ffffff;
+  table-layout: auto;
+}
+
+.processDataTable th:last-child,
+.processDataTable td:last-child {
+  width: 150px;
+  min-width: 150px;
+  max-width: 150px;
+  padding: 16px;
+  padding-right: 16px;
+  box-sizing: border-box;
 }
 
 .processDataTable thead {
@@ -2593,6 +2605,12 @@
   font-size: 14px;
   color: #111827;
   vertical-align: middle;
+}
+
+.processDataTable td:last-child {
+  position: relative;
+  overflow: visible;
+  white-space: nowrap;
 }
 
 .tableCheckbox {
@@ -2805,9 +2823,12 @@
 .tableActions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   justify-content: flex-end;
-  min-width: 120px;
+  width: 100%;
+  max-width: 140px;
+  flex-wrap: nowrap;
+  box-sizing: border-box;
 }
 
 .viewButton {
@@ -4458,58 +4479,223 @@
 /* Transcript Container */
 .transcriptContainer {
   width: 100%;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+}
+
+.transcriptHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid rgba(102, 126, 234, 0.15);
 }
 
 .transcriptTitle {
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 700;
-  color: #111827;
-  margin: 0 0 20px 0;
-  padding-bottom: 12px;
-  border-bottom: 2px solid rgba(102, 126, 234, 0.2);
-}
-
-.transcriptText {
-  max-height: 600px;
-  overflow-y: auto;
-  padding: 16px;
-  background: rgba(255, 255, 255, 0.5);
-  border-radius: 12px;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  line-height: 1.8;
-  font-size: 15px;
   color: #1f2937;
+  margin: 0;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-.transcriptText p {
-  margin: 0 0 12px 0;
-  word-wrap: break-word;
-  white-space: pre-wrap;
+.transcriptStats {
+  display: flex;
+  gap: 8px;
 }
 
-.transcriptText p:last-child {
+.transcriptStatBadge {
+  padding: 6px 12px;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #667eea;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+}
+
+.transcriptLoadingState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  min-height: 200px;
+}
+
+.transcriptSpinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid rgba(102, 126, 234, 0.1);
+  border-top-color: #667eea;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.transcriptLoadingText {
+  color: #6b7280;
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.transcriptContent {
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.transcriptContent::-webkit-scrollbar {
+  width: 10px;
+}
+
+.transcriptContent::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.5);
+  border-radius: 5px;
+}
+
+.transcriptContent::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.4) 100%);
+  border-radius: 5px;
+}
+
+.transcriptContent::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.6) 0%, rgba(118, 75, 162, 0.6) 100%);
+}
+
+.transcriptChunk {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 20px 0;
+  margin-bottom: 16px;
+  transition: none;
+  box-shadow: none;
+}
+
+.transcriptChunk:hover {
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.transcriptChunk:last-child {
   margin-bottom: 0;
 }
 
-.transcriptText::-webkit-scrollbar {
-  width: 8px;
+.transcriptChunkHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.6);
 }
 
-.transcriptText::-webkit-scrollbar-track {
-  background: rgba(241, 245, 249, 0.5);
-  border-radius: 4px;
+.transcriptChunkNumber {
+  font-size: 14px;
+  font-weight: 700;
+  color: #667eea;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(102, 126, 234, 0.2);
+  letter-spacing: 0.5px;
 }
 
-.transcriptText::-webkit-scrollbar-thumb {
-  background: rgba(102, 126, 234, 0.3);
-  border-radius: 4px;
+.transcriptChunkTimestamp {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  background: rgba(241, 245, 249, 0.8);
+  padding: 6px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
 }
 
-.transcriptText::-webkit-scrollbar-thumb:hover {
-  background: rgba(102, 126, 234, 0.5);
+.transcriptChunkText {
+  line-height: 1.85;
+  font-size: 15px;
+  color: #374151;
+  font-weight: 400;
+}
+
+.transcriptChunkText p {
+  margin: 0 0 14px 0;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  text-align: justify;
+}
+
+.transcriptChunkText p:last-child {
+  margin-bottom: 0;
+}
+
+.transcriptEmptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  min-height: 300px;
+  text-align: center;
+}
+
+.transcriptEmptyIcon {
+  font-size: 64px;
+  margin-bottom: 20px;
+  opacity: 0.6;
+}
+
+.transcriptEmptyText {
+  font-size: 18px;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 0 8px 0;
+}
+
+.transcriptEmptySubtext {
+  font-size: 14px;
+  color: #9ca3af;
+  margin: 0;
 }
 
 /* Step Table Section */
+.stepsHeader {
+  padding-bottom: 16px;
+  border-bottom: 2px solid rgba(226, 232, 240, 0.8);
+  margin-bottom: 24px;
+}
+
+.stepsTitle {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0 0 8px 0;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.stepsSubtitle {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0;
+  font-weight: 500;
+}
+
 .stepTableContainer {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(249, 250, 251, 0.9) 100%);
   border-radius: 16px;
@@ -4600,6 +4786,189 @@
   background: linear-gradient(135deg, rgba(102, 126, 234, 0.2) 0%, rgba(118, 75, 162, 0.2) 100%);
   transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(102, 126, 234, 0.2);
+}
+
+/* Documentation Section */
+.documentationContainer {
+  width: 100%;
+  max-width: 100%;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.documentationContent {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.documentationHeader {
+  padding-bottom: 16px;
+  border-bottom: 2px solid rgba(226, 232, 240, 0.8);
+  margin-bottom: 8px;
+}
+
+.documentationTitle {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0 0 8px 0;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.documentationSubtitle {
+  font-size: 14px;
+  color: #6b7280;
+  margin: 0;
+  font-weight: 500;
+}
+
+.documentationSteps {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.documentationStepCard {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(249, 250, 251, 0.95) 100%);
+  border-radius: 16px;
+  padding: 24px;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+}
+
+.documentationStepCard:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  transform: translateY(-2px);
+}
+
+.documentationStepHeader {
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.documentationStepNumber {
+  display: flex;
+  align-items: center;
+}
+
+.stepNumberBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%);
+  color: #667eea;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  border: 1px solid rgba(102, 126, 234, 0.3);
+  box-shadow: 0 2px 4px rgba(102, 126, 234, 0.1);
+}
+
+.documentationStepContent {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.documentationStepImage {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #f9fafb;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.6);
+}
+
+.documentationStepImage img {
+  transition: transform 0.3s ease;
+}
+
+.documentationStepImage img:hover {
+  transform: scale(1.02);
+}
+
+.documentationStepDescription {
+  width: 100%;
+}
+
+.descriptionText {
+  font-size: 15px;
+  color: #374151;
+  line-height: 1.8;
+  text-align: justify;
+}
+
+.descriptionText p {
+  margin: 0 0 1em 0;
+}
+
+.descriptionText p:last-child {
+  margin-bottom: 0;
+}
+
+.spriteSheetSection {
+  margin-top: 32px;
+  padding-top: 32px;
+  border-top: 2px solid rgba(226, 232, 240, 0.8);
+}
+
+.spriteSheetTitle {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0 0 16px 0;
+}
+
+.spriteSheetImage {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #f9fafb;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.6);
+}
+
+.spriteSheetImage img {
+  transition: transform 0.3s ease;
+}
+
+.spriteSheetImage img:hover {
+  transform: scale(1.02);
+}
+
+/* Responsive Documentation */
+@media (max-width: 768px) {
+  .documentationStepCard {
+    padding: 16px;
+  }
+
+  .documentationTitle {
+    font-size: 20px;
+  }
+
+  .documentationSteps {
+    gap: 24px;
+  }
+
+  .documentationStepContent {
+    gap: 16px;
+  }
+
+  .descriptionText {
+    font-size: 14px;
+  }
 }
 
 /* Responsive Document Detail */

@@ -5,7 +5,7 @@ import Layout from '../components/Layout';
 import SEO from '../components/SEO';
 import styles from '../styles/Dashboard.module.css';
 import { logPageView, logDocumentView } from '../lib/activityLogger';
-import { getVideosPanel, getDocument, bulkDeleteUploads } from '../lib/api';
+import { getVideosPanel, getDocument, getDocumentByVideoId, bulkDeleteUploads, getVideoFrames, getVideoTranscript } from '../lib/api';
 import dataCache, { CACHE_DURATION } from '../lib/dataCache';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9001';
@@ -20,6 +20,10 @@ export default function Document() {
   const [documentData, setDocumentData] = useState(null);
   const [summaries, setSummaries] = useState([]);
   const [summariesLoading, setSummariesLoading] = useState(false);
+  const [framesData, setFramesData] = useState([]);
+  const [framesLoading, setFramesLoading] = useState(false);
+  const [transcriptData, setTranscriptData] = useState(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
   
   // Get user's first name from localStorage
   const getUserFirstName = () => {
@@ -116,6 +120,106 @@ export default function Document() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query.video]);
 
+  // Fetch frames data when Steps tab is active
+  useEffect(() => {
+    const fetchFrames = async () => {
+      if (activeTab === 'steps' && selectedDocument) {
+        // Get video ID - prioritize video_id, then id
+        const videoId = selectedDocument.video_id || selectedDocument.id;
+        
+        if (!videoId) {
+          console.warn('No video ID found in selectedDocument:', selectedDocument);
+          setFramesData([]);
+          setFramesLoading(false);
+          return;
+        }
+        
+        try {
+          setFramesLoading(true);
+          console.log('Fetching frames from frame_analyses for video ID:', videoId, 'Document:', selectedDocument);
+          
+          // Fetch frames from frame_analyses table
+          const framesResponse = await getVideoFrames(videoId);
+          
+          console.log('Frames API response:', framesResponse);
+          
+          if (framesResponse && framesResponse.frames && Array.isArray(framesResponse.frames)) {
+            console.log(`Loaded ${framesResponse.frames.length} frames from frame_analyses table`);
+            setFramesData(framesResponse.frames);
+          } else {
+            console.log('No frames data in response. Response structure:', framesResponse);
+            setFramesData([]);
+          }
+        } catch (error) {
+          console.error('Failed to fetch frames from frame_analyses:', error);
+          console.error('Error details:', {
+            message: error.message,
+            response: error.response?.data,
+            status: error.response?.status
+          });
+          setFramesData([]);
+        } finally {
+          setFramesLoading(false);
+        }
+      } else if (activeTab !== 'steps') {
+        // Clear frames data when switching away from Steps tab
+        setFramesData([]);
+      }
+    };
+
+    fetchFrames();
+  }, [activeTab, selectedDocument]);
+
+  // Fetch transcript data when Transcribe tab is active
+  useEffect(() => {
+    const fetchTranscript = async () => {
+      if (activeTab === 'transcribe' && selectedDocument) {
+        // Get video ID - prioritize video_id, then id
+        const videoId = selectedDocument.video_id || selectedDocument.id;
+        
+        if (!videoId) {
+          console.warn('No video ID found for transcript fetch:', selectedDocument);
+          setTranscriptData(null);
+          setTranscriptLoading(false);
+          return;
+        }
+        
+        try {
+          setTranscriptLoading(true);
+          console.log('Fetching transcript from job_status for video ID:', videoId);
+          
+          // Fetch transcript from job_status table
+          const transcriptResponse = await getVideoTranscript(videoId);
+          
+          console.log('Transcript API response:', transcriptResponse);
+          
+          if (transcriptResponse && transcriptResponse.transcript) {
+            console.log('Transcript loaded from job_status');
+            setTranscriptData(transcriptResponse.transcript);
+          } else {
+            console.log('No transcript data in response');
+            setTranscriptData(null);
+          }
+        } catch (error) {
+          console.error('Failed to fetch transcript from job_status:', error);
+          console.error('Error details:', {
+            message: error.message,
+            response: error.response?.data,
+            status: error.response?.status
+          });
+          setTranscriptData(null);
+        } finally {
+          setTranscriptLoading(false);
+        }
+      } else if (activeTab !== 'transcribe') {
+        // Clear transcript data when switching away from Transcribe tab
+        setTranscriptData(null);
+      }
+    };
+
+    fetchTranscript();
+  }, [activeTab, selectedDocument]);
+
   const getCacheKey = (page) => `document:videos:page:${page}`;
 
   const fetchVideos = async (page = currentPage) => {
@@ -141,10 +245,13 @@ export default function Document() {
       });
       if (response && response.videos && Array.isArray(response.videos)) {
         // Map API response to document format
-        const mappedVideos = response.videos.map((video, index) => ({
+        const         mappedVideos = response.videos.map((video, index) => {
+          // Use original_input (user-entered name) for display, fallback to name if not available
+          const displayName = video.original_input || video.name || 'Untitled Video';
+          const mapped = {
           id: video.id,
           documentId: video.video_file_number || `DOC-${String((page - 1) * pageSize + index + 1).padStart(3, '0')}`,
-          name: video.name || 'Untitled Video',
+            name: displayName, // Use original_input as the display name
           type: 'Video',
           access: 'Public',
           fileSize: video.video_size_bytes ? `${(video.video_size_bytes / (1024 * 1024)).toFixed(1)} MB` : 'N/A',
@@ -164,7 +271,14 @@ export default function Document() {
           video_file_number: video.video_file_number,
           status: video.status,
           video_id: video.id
-        }));
+          };
+          // #region agent log
+          if (index === 0) { // Log first video only to avoid too many logs
+            fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:144',message:'Video mapping',data:{originalVideoFileNumber:video.video_file_number,mappedVideoFileNumber:mapped.video_file_number,hasVideoFileNumber:!!video.video_file_number},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+          }
+          // #endregion
+          return mapped;
+        });
         setVideos(mappedVideos);
         
         // Update pagination info
@@ -205,8 +319,14 @@ export default function Document() {
   };
 
   const fetchDocumentData = useCallback(async (videoFileNumber, forceRefresh = false) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:207',message:'fetchDocumentData entry',data:{videoFileNumber,forceRefresh},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     if (!videoFileNumber) {
       console.warn('fetchDocumentData called without videoFileNumber');
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:211',message:'fetchDocumentData: videoFileNumber is null/undefined',data:{videoFileNumber},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       setDocumentData(null);
       return;
     }
@@ -221,95 +341,40 @@ export default function Document() {
     const cachedData = dataCache.get(cacheKey);
     if (cachedData) {
         // Verify cached data matches the requested video
-        const cachedVideoNumber = cachedData.video_file_number || cachedData.video_metadata?.video_file_number;
+        const cachedVideoNumber = cachedData.video_file_number;
         if (cachedVideoNumber === videoFileNumber) {
+          // Use cached data (already transformed)
       setDocumentData(cachedData);
       
-      // Extract summaries from cached data (summaries are now included in document response)
-      if (cachedData.summaries && Array.isArray(cachedData.summaries)) {
-        console.log('[fetchDocumentData] Found summaries in cached data:', cachedData.summaries.length);
-        setSummaries(cachedData.summaries);
-        setSummariesLoading(false);
-      } else {
-        console.log('[fetchDocumentData] No summaries in cached data');
+          // Summaries are not in the new format
         setSummaries([]);
         setSummariesLoading(false);
-      }
       
-      // Update selected document with cached data including name
+          // Update selected document with cached data
       setSelectedDocument(prev => {
             if (prev && prev.video_file_number === videoFileNumber && cachedData) {
+              const frames = cachedData.frames || [];
           return {
             ...prev,
-            name: cachedData.video_metadata?.name || cachedData.name || prev.name || 'Untitled Video', // Update name from cached data
-            id: cachedData.video_metadata?.video_id || prev.id, // Ensure id is set
-            video_id: cachedData.video_metadata?.video_id || prev.video_id, // Ensure video_id is set
-            transcript: cachedData.transcript || null,
-            transcribe: (cachedData.frames && Array.isArray(cachedData.frames)) 
-              ? cachedData.frames.map((frame, index) => ({
+                name: prev.name || 'Untitled Video',
+                id: cachedData.video_id || prev.id,
+                video_id: cachedData.video_id || prev.video_id,
+                transcript: null,
+                transcribe: frames.map((frame, index) => ({
                   id: frame.frame_id || index + 1,
-                  text: frame.description || frame.ocr_text || '',
+                  text: frame.description || '',
                   timestamp: formatTimestamp(frame.timestamp)
-                }))
-              : [],
-            voiceExtraction: (cachedData.frames && Array.isArray(cachedData.frames))
-              ? cachedData.frames.map(f => f.description || f.ocr_text || '').filter(Boolean).join(' ') 
-              : 'No voice extraction available',
-            summary: cachedData.summary || 'No summary available',
-            steps: (cachedData.frames && Array.isArray(cachedData.frames))
-                  ? cachedData.frames.map((frame, index) => {
-                      // Extract meta_tags from GPT response dynamically - always use what GPT returns
-                      let metaTags = [];
-                      
-                      // First, check if meta_tags exists directly in gpt_response (primary source)
-                      if (frame.gpt_response && frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null) {
-                        // Use meta_tags directly from GPT response (even if empty array)
-                        if (Array.isArray(frame.gpt_response.meta_tags)) {
-                          metaTags = frame.gpt_response.meta_tags;
-                        } else if (typeof frame.gpt_response.meta_tags === 'string') {
-                          metaTags = [frame.gpt_response.meta_tags];
-                        }
-                      }
-                      // Also check if meta_tags exists at top level of frame (fallback check)
-                      else if (frame.meta_tags !== undefined && frame.meta_tags !== null) {
-                        if (Array.isArray(frame.meta_tags)) {
-                          metaTags = frame.meta_tags;
-                        } else if (typeof frame.meta_tags === 'string') {
-                          metaTags = [frame.meta_tags];
-                        }
-                      }
-                      
-                      // Only use fallback if GPT didn't provide meta_tags at all
-                      // If meta_tags is an empty array, that means GPT was called but returned no tags - keep it empty
-                      if (metaTags.length === 0) {
-                        const hasGptResponse = frame.gpt_response !== undefined && frame.gpt_response !== null;
-                        const hasMetaTagsInGpt = hasGptResponse && frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null;
-                        
-                        // Only use fallback if GPT response doesn't exist OR meta_tags is truly missing (not empty array)
-                        if (!hasGptResponse || !hasMetaTagsInGpt) {
-                          // Fallback: use OCR or generic tags only if GPT didn't provide meta_tags
-                          if (frame.ocr_text) {
-                            metaTags = ['ocr', 'text'];
-                          } else if (hasGptResponse) {
-                            // GPT was called but no meta_tags field - use generic
-                            metaTags = ['gpt', 'analysis'];
-                          } else {
-                            // No GPT response at all
-                            metaTags = ['frame', 'analysis'];
-                          }
-                        }
-                        // If hasGptResponse and hasMetaTagsInGpt but metaTags.length === 0, 
-                        // that means GPT returned empty array - keep it empty (don't use fallback)
-                      }
-                      
-                      return {
+                })),
+                voiceExtraction: frames.map(f => f.description || '').filter(Boolean).join(' ') || 'No voice extraction available',
+                summary: 'No summary available',
+                steps: frames.map((frame, index) => ({
                   id: frame.frame_id || index + 1,
+                  step_number: frame.step_number || index + 1,
                   timestamp: formatTimestamp(frame.timestamp),
-                  description: frame.description || frame.ocr_text || 'Frame analysis',
-                        metaTags: metaTags
-                      };
-                    })
-              : []
+                  description: frame.description || 'Step description',
+                  metaTags: ['documentation', 'step'],
+                  imageDataUrl: frame.base64_image ? `data:image/jpeg;base64,${frame.base64_image}` : null
+                }))
           };
         }
         return prev;
@@ -323,115 +388,95 @@ export default function Document() {
     }
 
     try {
-      console.log('Fetching fresh document data for video:', videoFileNumber);
+      console.log('[fetchDocumentData] Fetching fresh document data for video:', videoFileNumber);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:272',message:'Before API call',data:{videoFileNumber},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       const data = await getDocument(videoFileNumber, true); // Include images
-      console.log('Document data received:', data);
-      console.log('Document data frames:', data?.frames?.length || 0);
-      console.log('Document data transcript:', data?.transcript ? 'Present' : 'Missing');
-      console.log('Document data summaries:', data?.summaries?.length || 0);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:275',message:'After API call - response received',data:{hasData:!!data,dataKeys:data?Object.keys(data):[],docDataLength:data?.documentation_data?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
+      console.log('[fetchDocumentData] Document data received:', data);
+      console.log('[fetchDocumentData] Document data keys:', data ? Object.keys(data) : 'null');
+      console.log('[fetchDocumentData] Document data documentation_data:', data?.documentation_data?.length || 0);
       
       // Verify the data matches the requested video
-      const dataVideoNumber = data?.video_file_number || data?.video_metadata?.video_file_number;
+      const dataVideoNumber = data?.video_file_number;
       if (data && dataVideoNumber === videoFileNumber) {
-        console.log('Setting document data:', {
-          hasFrames: !!data.frames,
-          framesCount: data.frames?.length || 0,
-          hasTranscript: !!data.transcript,
-          hasSummaries: !!data.summaries,
-          summariesCount: data.summaries?.length || 0
-        });
-      setDocumentData(data || null);
-      
-      // Cache the data
-        dataCache.set(cacheKey, data, CACHE_DURATION.DOCUMENT_DATA);
+        // Transform documentation_data to frames format for compatibility
+        const frames = (data.documentation_data && Array.isArray(data.documentation_data))
+          ? data.documentation_data.map((step, index) => ({
+              frame_id: step.step_number || index + 1,
+              step_number: step.step_number || index + 1,
+              timestamp: (step.step_number || index + 1) * 1.0, // Approximate timestamp based on step number
+              description: step.description || '',
+              base64_image: step.image || null,
+              image: step.image || null,
+              ocr_text: null, // Not available in new format
+              gpt_response: null // Not available in new format
+            }))
+          : [];
         
-        // Extract summaries from document data (summaries are now included in document response)
-        if (data.summaries && Array.isArray(data.summaries)) {
-          console.log('[fetchDocumentData] Found summaries in document response:', data.summaries.length);
-          setSummaries(data.summaries);
-          setSummariesLoading(false);
-        } else {
-          console.log('[fetchDocumentData] No summaries in document response');
+        // Create a transformed data object for compatibility
+        const transformedData = {
+          ...data,
+          frames: frames,
+          // For backward compatibility, also keep documentation_data
+          documentation_data: data.documentation_data || []
+        };
+        
+        console.log('Setting document data:', {
+          hasDocumentationData: !!data.documentation_data,
+          documentationDataCount: data.documentation_data?.length || 0,
+          framesCount: frames.length,
+          numImages: data.num_images
+        });
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:309',message:'Before setDocumentData',data:{hasDocumentationData:!!data.documentation_data,docDataCount:data.documentation_data?.length||0,framesCount:frames.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+        setDocumentData(transformedData);
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:310',message:'After setDocumentData',data:{transformedDataKeys:Object.keys(transformedData)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+        
+        // Cache the transformed data
+        dataCache.set(cacheKey, transformedData, CACHE_DURATION.DOCUMENT_DATA);
+        
+        // Summaries are not in the new format, set empty
           setSummaries([]);
           setSummariesLoading(false);
-        }
       
       // Update selected document with real data including name
       setSelectedDocument(prev => {
           if (prev && prev.video_file_number === videoFileNumber && data) {
           return {
             ...prev,
-            name: data.video_metadata?.name || data.name || prev.name || 'Untitled Video', // Update name from documentData
-            id: data.video_metadata?.video_id || prev.id, // Ensure id is set from documentData
-            video_id: data.video_metadata?.video_id || prev.video_id, // Ensure video_id is set
-            transcript: data.transcript || null,
-            transcribe: (data.frames && Array.isArray(data.frames)) 
-              ? data.frames.map((frame, index) => ({
+            name: prev.name || 'Untitled Video', // Keep existing name
+            id: data.video_id || prev.id,
+            video_id: data.video_id || prev.video_id,
+            transcript: null, // Not available in new format
+            transcribe: frames.map((frame, index) => ({
                   id: frame.frame_id || index + 1,
-                  text: frame.description || frame.ocr_text || '',
+                  text: frame.description || '',
                   timestamp: formatTimestamp(frame.timestamp)
-                }))
-              : [],
-            voiceExtraction: (data.frames && Array.isArray(data.frames))
-              ? data.frames.map(f => f.description || f.ocr_text || '').filter(Boolean).join(' ') 
-              : 'No voice extraction available',
-            summary: data.summary || 'No summary available',
-            steps: (data.frames && Array.isArray(data.frames))
-              ? data.frames.map((frame, index) => {
-                      // Extract meta_tags from GPT response dynamically - always use what GPT returns
-                      let metaTags = [];
-                      
-                      // Check if gpt_response exists and has meta_tags
-                  if (frame.gpt_response) {
-                        // GPT was called, check for meta_tags
-                        if (frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null) {
-                          // Use meta_tags directly from GPT response (even if empty array)
-                    if (Array.isArray(frame.gpt_response.meta_tags)) {
-                      metaTags = frame.gpt_response.meta_tags;
-                          } else if (typeof frame.gpt_response.meta_tags === 'string') {
-                      metaTags = [frame.gpt_response.meta_tags];
-                    }
-                  }
-                      }
-                      
-                      // Only use fallback if GPT didn't provide meta_tags at all
-                      // If meta_tags is an empty array, that means GPT was called but returned no tags - keep it empty
-                      if (metaTags.length === 0) {
-                        const hasGptResponse = frame.gpt_response !== undefined && frame.gpt_response !== null;
-                        const hasMetaTagsInGpt = hasGptResponse && frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null;
-                        
-                        // Only use fallback if GPT response doesn't exist OR meta_tags is truly missing (not empty array)
-                        if (!hasGptResponse || !hasMetaTagsInGpt) {
-                          // Fallback: use OCR or generic tags only if GPT didn't provide meta_tags
-                          if (frame.ocr_text) {
-                            metaTags = ['ocr', 'text'];
-                          } else if (hasGptResponse) {
-                            // GPT was called but no meta_tags field - use generic
-                            metaTags = ['gpt', 'analysis'];
-                          } else {
-                            // No GPT response at all
-                            metaTags = ['frame', 'analysis'];
-                          }
-                        }
-                        // If hasGptResponse and hasMetaTagsInGpt but metaTags.length === 0, 
-                        // that means GPT returned empty array - keep it empty (don't use fallback)
-                  }
-                  
-                  return {
+                })),
+            voiceExtraction: frames.map(f => f.description || '').filter(Boolean).join(' ') || 'No voice extraction available',
+            summary: 'No summary available',
+            steps: frames.map((frame, index) => ({
                     id: frame.frame_id || index + 1,
+                  step_number: frame.step_number || index + 1,
                     timestamp: formatTimestamp(frame.timestamp),
-                    description: frame.description || frame.ocr_text || 'Frame analysis',
-                    metaTags: metaTags
-                  };
-                })
-              : []
+                  description: frame.description || 'Step description',
+                  metaTags: ['documentation', 'step'],
+                  imageDataUrl: frame.base64_image ? `data:image/jpeg;base64,${frame.base64_image}` : null
+                }))
           };
         }
         return prev;
       });
       } else {
         // Data doesn't match requested video
-        console.warn('Fetched data does not match requested video:', {
+        console.warn('[fetchDocumentData] Fetched data does not match requested video:', {
           requested: videoFileNumber,
           received: dataVideoNumber,
           data: data
@@ -439,15 +484,107 @@ export default function Document() {
         setDocumentData(null);
       }
     } catch (error) {
-      console.error('Failed to fetch document:', error);
-      console.error('Error details:', {
+      console.error('[fetchDocumentData] Failed to fetch document:', error);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:355',message:'API call error',data:{errorMessage:error.message,status:error.response?.status,errorData:error.response?.data,url:error.config?.url},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      console.error('[fetchDocumentData] Error details:', {
         message: error.message,
         response: error.response?.data,
-        status: error.response?.status
+        status: error.response?.status,
+        url: error.config?.url
       });
-      // Set empty data on error but show a message
+      
+      // If it's a 404, that's expected if documentation doesn't exist
+      if (error.response?.status === 404) {
+        console.log('[fetchDocumentData] Documentation not found (404) - this is expected if documentation has not been generated');
+        setDocumentData(null);
+      } else {
+        // Other errors
       setDocumentData(null);
       // You might want to show a toast/notification here
+      }
+    }
+  }, []);
+
+  // Fetch documentation by video ID (fallback when video_file_number is missing)
+  const fetchDocumentDataByVideoId = useCallback(async (videoId, forceRefresh = false) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:403',message:'fetchDocumentDataByVideoId entry',data:{videoId,forceRefresh},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    if (!videoId) {
+      console.warn('fetchDocumentDataByVideoId called without videoId');
+      setDocumentData(null);
+      return;
+    }
+    
+    const cacheKey = `document:data:video_id:${videoId}`;
+    
+    if (forceRefresh) {
+      dataCache.remove(cacheKey);
+    }
+    
+    try {
+      console.log('[fetchDocumentDataByVideoId] Fetching fresh document data for video_id:', videoId);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:413',message:'Before API call (by video_id)',data:{videoId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      const data = await getDocumentByVideoId(videoId, true); // Include images
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:416',message:'After API call (by video_id) - response received',data:{hasData:!!data,dataKeys:data?Object.keys(data):[],docDataLength:data?.documentation_data?.length||0,hasDetail:!!data?.detail},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
+      console.log('[fetchDocumentDataByVideoId] Document data received:', data);
+      
+      // Check if response is an error (has 'detail' field from 404/error response)
+      if (data && data.detail) {
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:420',message:'API returned error detail (likely 404)',data:{detail:data.detail},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        console.log('[fetchDocumentDataByVideoId] API returned error:', data.detail);
+        setDocumentData(null);
+        setSummaries([]);
+        setSummariesLoading(false);
+        return;
+      }
+      
+      if (data && data.documentation_data) {
+        // Transform documentation_data to frames format for compatibility
+        const frames = (data.documentation_data && Array.isArray(data.documentation_data))
+          ? data.documentation_data.map((step, index) => ({
+              frame_id: step.step_number || index + 1,
+              step_number: step.step_number || index + 1,
+              timestamp: (step.step_number || index + 1) * 1.0,
+              description: step.description || '',
+              base64_image: step.image || null,
+              image: step.image || null,
+              ocr_text: null,
+              gpt_response: null
+            }))
+          : [];
+        
+        const transformedData = {
+          ...data,
+          frames: frames,
+          documentation_data: data.documentation_data || []
+        };
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:433',message:'Before setDocumentData (by video_id)',data:{hasDocumentationData:!!data.documentation_data,docDataCount:data.documentation_data?.length||0,framesCount:frames.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+        setDocumentData(transformedData);
+        dataCache.set(cacheKey, transformedData, CACHE_DURATION.DOCUMENT_DATA);
+        setSummaries([]);
+        setSummariesLoading(false);
+      }
+    } catch (error) {
+      console.error('[fetchDocumentDataByVideoId] Failed to fetch document:', error);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:444',message:'API call error (by video_id)',data:{errorMessage:error.message,status:error.response?.status,errorData:error.response?.data},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      if (error.response?.status === 404) {
+        console.log('[fetchDocumentDataByVideoId] Documentation not found (404)');
+      }
+      setDocumentData(null);
     }
   }, []);
 
@@ -456,10 +593,16 @@ export default function Document() {
   const handleRowClick = useCallback(async (document, forceRefresh = true) => {
     if (!document) return;
     
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:398',message:'handleRowClick entry',data:{hasDocument:!!document,documentKeys:document?Object.keys(document):[],videoFileNumber:document?.video_file_number,id:document?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     // Clear previous data immediately when switching documents
     setDocumentData(null);
     setSummaries([]);
     setSelectedDocument(document);
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:404',message:'setSelectedDocument called',data:{videoFileNumber:document?.video_file_number},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     setDetailViewOpen(true);
     setActiveTab('transcribe'); // Reset to first tab when opening
     
@@ -484,64 +627,50 @@ export default function Document() {
     }
   }, [fetchDocumentData]);
 
-  // Extract summaries from documentData when it loads (summaries are included in document response)
+  // Process documentData when it loads (new format uses documentation_data)
   useEffect(() => {
     if (documentData) {
       console.log('[useEffect] documentData updated:', {
-        hasSummaries: !!documentData.summaries,
-        summariesType: typeof documentData.summaries,
-        summariesIsArray: Array.isArray(documentData.summaries),
-        summariesLength: documentData.summaries?.length || 0,
-        hasSummaryText: !!documentData.summary_text,
-        summaryTextLength: documentData.summary_text?.length || 0
+        hasDocumentationData: !!documentData.documentation_data,
+        documentationDataCount: documentData.documentation_data?.length || 0,
+        hasFrames: !!documentData.frames,
+        framesCount: documentData.frames?.length || 0,
+        numImages: documentData.num_images
       });
       
-      // Set loading state based on whether documentData is still being fetched
-      if (documentData.summaries !== undefined) {
-        // Summaries field exists (could be array or null)
-        if (Array.isArray(documentData.summaries) && documentData.summaries.length > 0) {
-          console.log('[useEffect] Found summaries in documentData:', documentData.summaries.length);
-          setSummaries(documentData.summaries);
-        } else {
-          // Summaries is null or empty array - check if summary_text exists
-          if (documentData.summary_text && documentData.summary_text.trim()) {
-            console.log('[useEffect] No summaries array but summary_text exists, creating summary object');
-            // Create a summary object from summary_text
-            setSummaries([{
-              batch_number: 1,
-              total_batches: 1,
-              summary_text: documentData.summary_text,
-              batch_start_frame: 1,
-              batch_end_frame: documentData.total_frames || 1
-            }]);
-          } else {
-            console.log('[useEffect] No summaries in documentData (null or empty)');
+      // New format doesn't have summaries, set empty
             setSummaries([]);
-          }
-        }
         setSummariesLoading(false);
-      } else {
-        // Document data loaded but summaries field not present - check summary_text
-        if (documentData.summary_text && documentData.summary_text.trim()) {
-          console.log('[useEffect] summaries field not present but summary_text exists');
-          setSummaries([{
-            batch_number: 1,
-            total_batches: 1,
-            summary_text: documentData.summary_text,
-            batch_start_frame: 1,
-            batch_end_frame: documentData.total_frames || 1
-          }]);
-        } else {
-          console.log('[useEffect] documentData loaded but summaries field not present');
-          setSummaries([]);
-        }
-        setSummariesLoading(false);
-      }
     } else {
       // Document data is being fetched, show loading
       setSummariesLoading(true);
     }
   }, [documentData]);
+
+  // Fetch documentation when Documentation tab is active and documentData is null
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:429',message:'useEffect for documentation tab',data:{activeTab,hasDocumentData:!!documentData,hasSelectedDocument:!!selectedDocument,videoFileNumber:selectedDocument?.video_file_number},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    if (activeTab === 'documentation' && !documentData && selectedDocument) {
+      // Try video_file_number first, then fall back to video_id
+      const videoFileNumber = selectedDocument?.video_file_number;
+      const videoId = selectedDocument?.id || selectedDocument?.video_id;
+      if (videoFileNumber) {
+        console.log('[useEffect] Documentation tab active but no data, fetching...', videoFileNumber);
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:433',message:'Calling fetchDocumentData from useEffect (by file_number)',data:{videoFileNumber},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+        fetchDocumentData(videoFileNumber, true);
+      } else if (videoId) {
+        console.log('[useEffect] Documentation tab active but no data, fetching by video_id...', videoId);
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:440',message:'Calling fetchDocumentDataByVideoId from useEffect (fallback)',data:{videoId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+        fetchDocumentDataByVideoId(videoId, true);
+      }
+    }
+  }, [activeTab, documentData, selectedDocument?.video_file_number, selectedDocument?.id, selectedDocument?.video_id, fetchDocumentData, fetchDocumentDataByVideoId]);
 
   const handleCloseDetail = () => {
     setDetailViewOpen(false);
@@ -922,7 +1051,7 @@ export default function Document() {
                 <h2 className={styles.detailTitle}>
                   {selectedDocument?.name && selectedDocument.name !== 'Loading...' 
                     ? selectedDocument.name 
-                    : (documentData?.video_metadata?.name || documentData?.name || 'Document')}
+                    : (selectedDocument?.name || 'Document')}
                 </h2>
                 <button className={styles.closeButton} onClick={handleCloseDetail}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -961,6 +1090,41 @@ export default function Document() {
                 >
                   PDF
                 </button>
+                <button
+                  className={`${styles.tabButton} ${activeTab === 'documentation' ? styles.tabActive : ''}`}
+                  onClick={() => {
+                    // #region agent log
+                    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:850',message:'Documentation tab clicked',data:{hasDocumentData:!!documentData,hasSelectedDocument:!!selectedDocument,videoFileNumber:selectedDocument?.video_file_number,selectedDocKeys:selectedDocument?Object.keys(selectedDocument):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                    // #endregion
+                    setActiveTab('documentation');
+                    // If documentData is null and we have a selected document, try to fetch it
+                    if (!documentData && selectedDocument) {
+                      // Try video_file_number first, then fall back to video_id
+                      const videoFileNumber = selectedDocument?.video_file_number;
+                      const videoId = selectedDocument?.id || selectedDocument?.video_id;
+                      if (videoFileNumber) {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:856',message:'Calling fetchDocumentData from onClick (by file_number)',data:{videoFileNumber},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                        // #endregion
+                        fetchDocumentData(videoFileNumber, true);
+                      } else if (videoId) {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:861',message:'Calling fetchDocumentDataByVideoId from onClick (fallback)',data:{videoId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                        // #endregion
+                        fetchDocumentDataByVideoId(videoId, true);
+                      } else {
+                        // #region agent log
+                        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:866',message:'Cannot fetch: no identifier found',data:{selectedDocumentKeys:Object.keys(selectedDocument||{}),hasVideoFileNumber:!!selectedDocument?.video_file_number,hasVideoId:!!videoId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                        // #endregion
+                      }
+                    }
+                  }}
+                  role="tab"
+                  aria-selected={activeTab === 'documentation'}
+                  aria-controls="documentation-panel"
+                >
+                  Documentation
+                </button>
               </nav>
 
               <article className={styles.detailContent}>
@@ -973,41 +1137,104 @@ export default function Document() {
                     aria-labelledby="transcribe-tab"
                   >
                     <div className={styles.transcribeContainer} role="region" aria-label="Transcription content">
-                      {(() => {
-                        // Get transcript from documentData or selectedDocument
-                        const transcript = documentData?.transcript || selectedDocument?.transcript;
-                        
-                        console.log('[Transcribe Tab] Transcript check:', {
-                          hasDocumentData: !!documentData,
-                          transcriptFromDocumentData: !!documentData?.transcript,
-                          transcriptFromSelected: !!selectedDocument?.transcript,
-                          transcriptLength: transcript?.length || 0
-                        });
-                        
-                        // If transcript exists (even if it's the default message), display it
-                        if (transcript && transcript.trim()) {
-                          return (
-                            <div className={styles.transcriptContainer}>
-                              <h3 className={styles.transcriptTitle}>Transcription</h3>
-                              <div className={styles.transcriptText}>
-                                {transcript.split('\n').map((line, index) => (
-                                  <p key={index}>{line || '\u00A0'}</p>
-                                ))}
-                              </div>
+                      <div className={styles.transcriptContainer}>
+                        <div className={styles.transcriptHeader}>
+                          <h3 className={styles.transcriptTitle}>Transcription</h3>
+                          {transcriptData && transcriptData.trim() && (
+                            <div className={styles.transcriptStats}>
+                              <span className={styles.transcriptStatBadge}>
+                                {transcriptData.split(/\n+/).filter(line => line.trim()).length} segments
+                              </span>
                             </div>
-                          );
-                        } else {
-                          // If no transcript in DB, show default message
-                          return (
-                            <div className={styles.transcriptContainer}>
-                              <h3 className={styles.transcriptTitle}>Transcription</h3>
-                              <div className={styles.transcriptText}>
-                                <p>video doesn&apos;t have any voice</p>
-                              </div>
-                            </div>
-                          );
-                        }
-                      })()}
+                          )}
+                        </div>
+                        
+                        {transcriptLoading ? (
+                          <div className={styles.transcriptLoadingState}>
+                            <div className={styles.transcriptSpinner}></div>
+                            <p className={styles.transcriptLoadingText}>Loading transcript...</p>
+                          </div>
+                        ) : transcriptData && transcriptData.trim() ? (
+                          <div className={styles.transcriptContent}>
+                            {(() => {
+                              // Parse transcript into chunks with timestamps
+                              const lines = transcriptData.split('\n').filter(line => line.trim());
+                              const chunks = [];
+                              let currentChunk = null;
+                              
+                              lines.forEach((line, index) => {
+                                // Check if line is a chunk header (e.g., [Chunk 1 ~0.0 min])
+                                const chunkMatch = line.match(/\[Chunk\s+(\d+)\s*~([\d.]+)\s*min\]/i);
+                                
+                                if (chunkMatch) {
+                                  // Save previous chunk if exists
+                                  if (currentChunk) {
+                                    chunks.push(currentChunk);
+                                  }
+                                  // Start new chunk
+                                  currentChunk = {
+                                    number: parseInt(chunkMatch[1]),
+                                    timestamp: parseFloat(chunkMatch[2]),
+                                    text: []
+                                  };
+                                } else if (currentChunk) {
+                                  // Add line to current chunk
+                                  currentChunk.text.push(line);
+                                } else {
+                                  // No chunk header found, treat as regular text
+                                  if (chunks.length === 0 || chunks[chunks.length - 1].number === undefined) {
+                                    // Create a default chunk for text without headers
+                                    if (!currentChunk) {
+                                      currentChunk = { number: 1, timestamp: 0, text: [] };
+                                    }
+                                    currentChunk.text.push(line);
+                                  } else {
+                                    chunks[chunks.length - 1].text.push(line);
+                                  }
+                                }
+                              });
+                              
+                              // Add last chunk
+                              if (currentChunk && currentChunk.text.length > 0) {
+                                chunks.push(currentChunk);
+                              }
+                              
+                              // If no chunks found, treat all lines as one chunk
+                              if (chunks.length === 0) {
+                                chunks.push({
+                                  number: 1,
+                                  timestamp: 0,
+                                  text: lines
+                                });
+                              }
+                              
+                              return chunks.map((chunk, chunkIndex) => (
+                                <div key={chunkIndex} className={styles.transcriptChunk}>
+                                  <div className={styles.transcriptChunkHeader}>
+                                    <span className={styles.transcriptChunkNumber}>
+                                      Chunk {chunk.number}
+                                    </span>
+                                    <span className={styles.transcriptChunkTimestamp}>
+                                      ~{chunk.timestamp.toFixed(1)} min
+                                    </span>
+                                  </div>
+                                  <div className={styles.transcriptChunkText}>
+                                    {chunk.text.map((textLine, lineIndex) => (
+                                      <p key={lineIndex}>{textLine || '\u00A0'}</p>
+                                    ))}
+                                  </div>
+                                </div>
+                              ));
+                            })()}
+                          </div>
+                        ) : (
+                          <div className={styles.transcriptEmptyState}>
+                            <div className={styles.transcriptEmptyIcon}>🎤</div>
+                            <p className={styles.transcriptEmptyText}>video doesn&apos;t have any voice</p>
+                            <p className={styles.transcriptEmptySubtext}>No transcript available for this video</p>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </section>
                 )}
@@ -1023,11 +1250,9 @@ export default function Document() {
                     <div className={styles.pdfContainer}>
                       {(() => {
                         // Try multiple ways to get video ID and PDF URL
-                        const videoId = selectedDocument?.id || selectedDocument?.video_id || documentData?.video_metadata?.video_id || documentData?.video_id;
-                        const summaryPdfUrl = documentData?.summary_pdf_url || 
-                                              documentData?.video_metadata?.summary_pdf_url ||
-                                              selectedDocument?.summary_pdf_url;
-                        const videoFileNumber = selectedDocument?.video_file_number || documentData?.video_metadata?.video_file_number;
+                        const videoId = selectedDocument?.id || selectedDocument?.video_id || documentData?.video_id;
+                        const summaryPdfUrl = selectedDocument?.summary_pdf_url || null;
+                        const videoFileNumber = selectedDocument?.video_file_number || documentData?.video_file_number;
                         
                         console.log('PDF Tab Debug:', {
                           videoId,
@@ -1062,7 +1287,7 @@ export default function Document() {
                             console.log('Using summaryPdfUrl as direct URL:', pdfUrl);
                           } else {
                             // Relative path - try to construct API URL if we can get videoId from documentData
-                            const fallbackVideoId = documentData?.video_metadata?.video_id || documentData?.video_id;
+                            const fallbackVideoId = documentData?.video_id || selectedDocument?.video_id;
                             if (fallbackVideoId) {
                               pdfUrl = `${API_BASE_URL || 'http://localhost:8000'}/api/videos/${fallbackVideoId}/summary-pdf`;
                               console.log('Constructed PDF URL from fallback videoId:', pdfUrl);
@@ -1127,6 +1352,198 @@ export default function Document() {
                   </section>
                 )}
 
+                {/* Documentation Tab */}
+                {activeTab === 'documentation' && (
+                  <section 
+                    id="documentation-panel"
+                    className={styles.tabPanel}
+                    role="tabpanel"
+                    aria-labelledby="documentation-tab"
+                  >
+                    <div className={styles.documentationContainer}>
+                      {(() => {
+                        // Get documentation data
+                        const docData = documentData?.documentation_data || documentData?.frames || [];
+                        // #region agent log
+                        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:1077',message:'Documentation tab render',data:{hasDocumentData:!!documentData,docDataLength:docData.length,hasDocDataProp:!!documentData?.documentation_data,hasFramesProp:!!documentData?.frames,activeTab},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+                        // #endregion
+                        if (!docData || docData.length === 0) {
+                          return (
+                            <div className={styles.emptyState}>
+                              <p>No documentation available.</p>
+                              <p style={{ fontSize: '0.9em', color: '#666', marginTop: '8px' }}>
+                                {documentData ? 'The video documentation may not have been generated yet.' : 'Loading document data...'}
+                              </p>
+                            </div>
+                          );
+                        }
+                        
+                        return (
+                          <div className={styles.documentationContent}>
+                            <div className={styles.documentationHeader}>
+                              <h3 className={styles.documentationTitle}>Video Documentation</h3>
+                              <p className={styles.documentationSubtitle}>
+                                {docData.length} step{docData.length !== 1 ? 's' : ''} documented
+                              </p>
+                            </div>
+                            
+                            <div className={styles.documentationSteps}>
+                              {docData.map((step, index) => {
+                                const stepNumber = step.step_number || index + 1;
+                                const description = step.description || 'No description available';
+                                const image = step.image || step.base64_image;
+                                
+                                // Construct base64 image data URL
+                                let imageDataUrl = null;
+                                if (image) {
+                                  if (image.startsWith('data:')) {
+                                    imageDataUrl = image;
+                                  } else {
+                                    imageDataUrl = `data:image/jpeg;base64,${image}`;
+                                  }
+                                }
+                                
+                                return (
+                                  <div key={`doc-step-${stepNumber}-${index}`} className={styles.documentationStepCard}>
+                                    <div className={styles.documentationStepHeader}>
+                                      <div className={styles.documentationStepNumber}>
+                                        <span className={styles.stepNumberBadge}>Step {stepNumber}</span>
+                                      </div>
+                                    </div>
+                                    
+                                    <div className={styles.documentationStepContent}>
+                                      {imageDataUrl && (
+                                        <div className={styles.documentationStepImage}>
+                                          <img 
+                                            src={imageDataUrl}
+                                            alt={`Documentation step ${stepNumber}`}
+                                            style={{
+                                              width: '100%',
+                                              height: 'auto',
+                                              maxHeight: '400px',
+                                              objectFit: 'contain',
+                                              borderRadius: '8px',
+                                              border: '1px solid #e0e0e0',
+                                              cursor: 'pointer',
+                                              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                                            }}
+                                            onClick={() => {
+                                              // Open image in new tab for full size
+                                              const newWindow = window.open();
+                                              if (newWindow) {
+                                                newWindow.document.write(`
+                                                  <html>
+                                                    <head>
+                                                      <title>Step ${stepNumber} - Documentation</title>
+                                                      <style>
+                                                        body { 
+                                                          margin: 0; 
+                                                          padding: 20px; 
+                                                          background: #f5f5f5; 
+                                                          display: flex; 
+                                                          justify-content: center; 
+                                                          align-items: center; 
+                                                          min-height: 100vh;
+                                                        }
+                                                        img { 
+                                                          max-width: 100%; 
+                                                          height: auto; 
+                                                          border-radius: 8px;
+                                                          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                                                        }
+                                                      </style>
+                                                    </head>
+                                                    <body>
+                                                      <img src="${imageDataUrl}" alt="Step ${stepNumber}" />
+                                                    </body>
+                                                  </html>
+                                                `);
+                                              }
+                                            }}
+                                            onError={(e) => {
+                                              e.target.style.display = 'none';
+                                            }}
+                                          />
+                                        </div>
+                                      )}
+                                      
+                                      <div className={styles.documentationStepDescription}>
+                                        <div className={styles.descriptionText}>
+                                          {description.split('\n').map((paragraph, pIndex) => (
+                                            paragraph.trim() ? (
+                                              <p key={pIndex} style={{ marginBottom: '1em', lineHeight: '1.6' }}>
+                                                {paragraph}
+                                              </p>
+                                            ) : null
+                                          ))}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            
+                            {/* Show sprite sheet if available */}
+                            {documentData?.sprite_sheet_base64 && (
+                              <div className={styles.spriteSheetSection}>
+                                <h4 className={styles.spriteSheetTitle}>Sprite Sheet</h4>
+                                <div className={styles.spriteSheetImage}>
+                                  <img 
+                                    src={`data:image/jpeg;base64,${documentData.sprite_sheet_base64}`}
+                                    alt="Sprite sheet"
+                                    style={{
+                                      width: '100%',
+                                      height: 'auto',
+                                      maxHeight: '500px',
+                                      objectFit: 'contain',
+                                      borderRadius: '8px',
+                                      border: '1px solid #e0e0e0',
+                                      cursor: 'pointer'
+                                    }}
+                                    onClick={() => {
+                                      const newWindow = window.open();
+                                      if (newWindow) {
+                                        newWindow.document.write(`
+                                          <html>
+                                            <head>
+                                              <title>Sprite Sheet</title>
+                                              <style>
+                                                body { 
+                                                  margin: 0; 
+                                                  padding: 20px; 
+                                                  background: #f5f5f5; 
+                                                  display: flex; 
+                                                  justify-content: center; 
+                                                  align-items: center; 
+                                                  min-height: 100vh;
+                                                }
+                                                img { 
+                                                  max-width: 100%; 
+                                                  height: auto; 
+                                                  border-radius: 8px;
+                                                  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                                                }
+                                              </style>
+                                            </head>
+                                            <body>
+                                              <img src="data:image/jpeg;base64,${documentData.sprite_sheet_base64}" alt="Sprite Sheet" />
+                                            </body>
+                                          </html>
+                                        `);
+                                      }
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </section>
+                )}
+
                 {/* Steps Tab */}
                 {activeTab === 'steps' && (
                   <section 
@@ -1136,6 +1553,12 @@ export default function Document() {
                     aria-labelledby="steps-tab"
                   >
                     <div className={styles.stepTableContainer}>
+                      <div className={styles.stepsHeader}>
+                        <h3 className={styles.stepsTitle}>Video Steps</h3>
+                        <p className={styles.stepsSubtitle}>
+                          {framesLoading ? 'Loading...' : `${framesData.length} step${framesData.length !== 1 ? 's' : ''} documented`}
+                        </p>
+                      </div>
                       <table className={styles.stepTable}>
                         <thead>
                           <tr>
@@ -1147,101 +1570,48 @@ export default function Document() {
                         </thead>
                         <tbody>
                           {(() => {
-                            // Use documentData if available, otherwise use selectedDocument
-                            let stepsData = [];
-                            
-                            console.log('[Steps Tab] Data check:', {
-                              hasDocumentData: !!documentData,
-                              framesCount: documentData?.frames?.length || 0,
-                              hasSelectedDocument: !!selectedDocument,
-                              selectedStepsCount: selectedDocument?.steps?.length || 0
-                            });
-                            
-                            if (documentData?.frames && Array.isArray(documentData.frames) && documentData.frames.length > 0) {
-                              // Ensure we process ALL frames, not just the last one
-                              stepsData = documentData.frames.map((frame, index) => {
-                                // Extract meta_tags from GPT response dynamically - always use what GPT returns
-                                let metaTags = [];
-                                
-                                // First, check if meta_tags exists directly in gpt_response (primary source)
-                                if (frame.gpt_response && frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null) {
-                                  // Use meta_tags directly from GPT response (even if empty array)
-                                  if (Array.isArray(frame.gpt_response.meta_tags)) {
-                                    metaTags = frame.gpt_response.meta_tags;
-                                  } else if (typeof frame.gpt_response.meta_tags === 'string') {
-                                    metaTags = [frame.gpt_response.meta_tags];
-                                  }
-                                }
-                                // Also check if meta_tags exists at top level of frame (fallback check)
-                                else if (frame.meta_tags !== undefined && frame.meta_tags !== null) {
-                                  if (Array.isArray(frame.meta_tags)) {
-                                    metaTags = frame.meta_tags;
-                                  } else if (typeof frame.meta_tags === 'string') {
-                                    metaTags = [frame.meta_tags];
-                                  }
-                                }
-                                
-                                // Only use fallback if GPT didn't provide meta_tags at all
-                                // If meta_tags is an empty array, that means GPT was called but returned no tags - keep it empty
-                                if (metaTags.length === 0) {
-                                  const hasGptResponse = frame.gpt_response !== undefined && frame.gpt_response !== null;
-                                  const hasMetaTagsInGpt = hasGptResponse && frame.gpt_response.meta_tags !== undefined && frame.gpt_response.meta_tags !== null;
-                                  
-                                  // Only use fallback if GPT response doesn't exist OR meta_tags is truly missing (not empty array)
-                                  if (!hasGptResponse || !hasMetaTagsInGpt) {
-                                    // Fallback: use OCR or generic tags only if GPT didn't provide meta_tags
-                                    if (frame.ocr_text) {
-                                      metaTags = ['ocr', 'text'];
-                                    } else if (hasGptResponse) {
-                                      // GPT was called but no meta_tags field - use generic
-                                      metaTags = ['gpt', 'analysis'];
-                                    } else {
-                                      // No GPT response at all
-                                      metaTags = ['frame', 'analysis'];
-                                    }
-                                  }
-                                  // If hasGptResponse and hasMetaTagsInGpt but metaTags.length === 0, 
-                                  // that means GPT returned empty array - keep it empty (don't use fallback)
-                                }
-                                
-                                // Construct base64 image data URL
-                                let imageDataUrl = null;
-                                if (frame.base64_image) {
-                                  imageDataUrl = `data:image/jpeg;base64,${frame.base64_image}`;
-                                }
-                                
-                                return {
-                                id: frame.frame_id || index + 1,
-                                timestamp: formatTimestamp(frame.timestamp),
-                                description: frame.description || frame.ocr_text || 'Frame analysis',
-                                  metaTags: metaTags,
-                                  imageDataUrl: imageDataUrl
-                                };
-                              });
-                            } else if (selectedDocument?.steps && Array.isArray(selectedDocument.steps)) {
-                              stepsData = selectedDocument.steps;
+                            if (framesLoading) {
+                              return (
+                                <tr>
+                                  <td colSpan="4" className={styles.emptyState}>
+                                    <p>Loading frame analyses...</p>
+                                  </td>
+                                </tr>
+                              );
                             }
                             
-                            if (!stepsData || stepsData.length === 0) {
+                            if (!framesData || framesData.length === 0) {
                               return (
                                 <tr>
                                   <td colSpan="4" className={styles.emptyState}>
                                     <p>No step data available.</p>
                                     <p style={{ fontSize: '0.9em', color: '#666', marginTop: '8px' }}>
-                                      {documentData ? 'The video processing may not have completed frame analysis yet.' : 'Loading document data...'}
+                                      The video processing may not have completed frame analysis yet, or no frames have been analyzed.
                                     </p>
                                   </td>
                                 </tr>
                               );
                             }
                             
-                            return stepsData.map((step, index) => (
-                              <tr key={`step-${step.id || index}-${step.timestamp || index}`}>
+                            // Process frames from frame_analyses database
+                            return framesData.map((frame, index) => {
+                              // Construct base64 image data URL
+                              let imageDataUrl = null;
+                              if (frame.base64_image) {
+                                if (frame.base64_image.startsWith('data:')) {
+                                  imageDataUrl = frame.base64_image;
+                                } else {
+                                  imageDataUrl = `data:image/jpeg;base64,${frame.base64_image}`;
+                                }
+                              }
+                              
+                              return (
+                                <tr key={`frame-${frame.id || index}-${frame.timestamp || index}`}>
                                 <td className={styles.stepImage}>
-                                  {step.imageDataUrl ? (
+                                    {imageDataUrl ? (
                                     <img 
-                                      src={step.imageDataUrl}
-                                      alt={`Frame at ${step.timestamp}`}
+                                        src={imageDataUrl}
+                                        alt={`Frame at ${formatTimestamp(frame.timestamp)}`}
                                       style={{
                                         width: '150px',
                                         height: 'auto',
@@ -1255,7 +1625,7 @@ export default function Document() {
                                         // Open image in new tab
                                         const newWindow = window.open();
                                         if (newWindow) {
-                                          newWindow.document.write(`<img src="${step.imageDataUrl}" style="max-width: 100%; height: auto;" />`);
+                                            newWindow.document.write(`<img src="${imageDataUrl}" style="max-width: 100%; height: auto;" />`);
                                         }
                                       }}
                                       onError={(e) => {
@@ -1266,23 +1636,24 @@ export default function Document() {
                                     <span style={{ color: '#999', fontSize: '12px' }}>No image</span>
                                   )}
                                 </td>
-                                <td className={styles.stepTimestamp}>{step.timestamp || '0:00'}</td>
-                                <td className={styles.stepDescription}>{step.description || 'Frame analysis'}</td>
+                                  <td className={styles.stepTimestamp}>{formatTimestamp(frame.timestamp)}</td>
+                                  <td className={styles.stepDescription}>{frame.description || 'Frame analysis'}</td>
                                 <td className={styles.stepMetaTags}>
                                   <div className={styles.metaTagsContainer}>
-                                    {step.metaTags && Array.isArray(step.metaTags) && step.metaTags.length > 0 ? (
-                                      step.metaTags.map((tag, tagIndex) => (
-                                        <span key={tagIndex} className={styles.metaTag}>
-                                          {tag}
-                                        </span>
-                                      ))
-                                    ) : (
-                                      <span className={styles.metaTag}>frame</span>
-                                    )}
+                                      <span className={styles.metaTag}>frame #{frame.frame_number || index + 1}</span>
+                                      {frame.gpt_response && <span className={styles.metaTag}>GPT analyzed</span>}
+                                      {frame.ocr_text && <span className={styles.metaTag}>OCR</span>}
+                                      {frame.description && <span className={styles.metaTag}>described</span>}
                                   </div>
+                                  {frame.ocr_text && (
+                                    <div style={{ marginTop: '8px', fontSize: '0.85em', color: '#666', fontStyle: 'italic' }}>
+                                      OCR: {frame.ocr_text.substring(0, 100)}{frame.ocr_text.length > 100 ? '...' : ''}
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
-                            ));
+                              );
+                            });
                           })()}
                         </tbody>
                       </table>

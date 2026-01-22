@@ -18,31 +18,11 @@ from app.models.video_schemas import (
     BulkDeleteRequest
 )
 
-# Job processing schemas
-from app.models.job_schemas import (
-    ProcessingStatus,
-    ProcessingResult,
-    JobStatusResponse
-)
-
-# Frame analysis schemas
-from app.models.frame_schemas import (
-    FrameAnalysisResponse,
-    FrameAnalysisListResponse
-)
-
 # Activity log schemas
 from app.models.activity_schemas import (
     ActivityLogResponse,
     ActivityLogListResponse,
     ActivityLogStatsResponse
-)
-
-# Document schemas
-from app.models.document_schemas import (
-    DocumentResponse,
-    VideoMetadata,
-    FrameData
 )
 
 # Video panel schemas
@@ -64,21 +44,10 @@ __all__ = [
     "VideoUploadListResponse",
     "VideoUploadUpdate",
     "BulkDeleteRequest",
-    # Job schemas
-    "ProcessingStatus",
-    "ProcessingResult",
-    "JobStatusResponse",
-    # Frame schemas
-    "FrameAnalysisResponse",
-    "FrameAnalysisListResponse",
     # Activity schemas
     "ActivityLogResponse",
     "ActivityLogListResponse",
     "ActivityLogStatsResponse",
-    # Document schemas
-    "DocumentResponse",
-    "VideoMetadata",
-    "FrameData",
     # Video panel schemas
     "VideoPanelItem",
     "VideoPanelResponse",

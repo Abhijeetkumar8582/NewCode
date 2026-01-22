@@ -39,17 +39,16 @@ class Settings(BaseSettings):
     GPT_BEARER_TOKEN: Optional[str] = None
     
     # File Settings
-    UPLOAD_DIR: Union[str, Path] = Path("./uploads")
-    OUTPUT_DIR: Union[str, Path] = Path("./outputs")
-    FRAMES_DIR: Union[str, Path] = Path("./frames")  # Directory for extracted frames
+    UPLOAD_DIR: Union[str, Path] = Path("./uploads")  # Temporary storage before S3 upload
     AUDIO_DIR: Union[str, Path] = Path("./audio")  # Directory for extracted audio files
     MAX_FILE_SIZE: int = 500 * 1024 * 1024  # 500MB
     ALLOWED_EXTENSIONS: Union[str, List[str]] = [".mp4", ".avi", ".mov", ".mkv", ".webm"]
     
-    # Frame Analysis Settings
-    FRAMES_PER_SECOND: float = 0.5  # Extract 1 frame every 2 seconds (0.5 frames per second)
-    FRAME_ANALYSIS_WORKERS: int = 4  # Number of parallel workers for frame analysis
-    GPT_BATCH_SIZE: int = 10  # Number of frames to send in a single GPT API call
+    # AWS S3 Settings
+    S3_BUCKET_NAME: Optional[str] = None
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
+    AWS_REGION: str = "ap-south-1"  # Default to ap-south-1 (Mumbai)
     
     # Database Settings
     # MySQL format: mysql+aiomysql://user:password@host:port/database
@@ -133,19 +132,6 @@ class Settings(BaseSettings):
             return Path(v)
         return v
     
-    @field_validator('OUTPUT_DIR', mode='before')
-    @classmethod
-    def parse_output_dir(cls, v):
-        if isinstance(v, str):
-            return Path(v)
-        return v
-    
-    @field_validator('FRAMES_DIR', mode='before')
-    @classmethod
-    def parse_frames_dir(cls, v):
-        if isinstance(v, str):
-            return Path(v)
-        return v
     
     @field_validator('ALLOWED_EXTENSIONS', mode='before')
     @classmethod

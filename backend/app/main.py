@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends, Request, Header, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request, Header, Query, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
@@ -15,32 +15,25 @@ import asyncio
 import aiofiles
 from contextlib import asynccontextmanager
 from typing import Optional, List
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 from uuid import UUID
 
 from app.config import settings
-from app.database import init_db, get_db, AsyncSession, User
-from app.services.video_processor import VideoProcessor
-from app.services.document_generator import DocumentGenerator
-from app.services.job_service import JobService
+from app.database import init_db, get_db, AsyncSession, User, VideoDocumentation, FrameAnalysis
 from app.services.auth_service import AuthService
 from app.services.activity_service import ActivityService
 from app.services.google_oauth_service import GoogleOAuthService
 from app.services.video_upload_service import VideoUploadService
 from app.services.video_metadata_service import VideoMetadataService
-from app.services.frame_analysis_service import FrameAnalysisService
 from app.services.cache_service import CacheService
 from app.services.metrics_service import metrics_service
 from app.services.system_monitor import system_monitor
 from app.models import (
     UserSignup, UserLogin, SignupResponse, LoginResponse, UserResponse,
     VideoUploadCreate, VideoUploadResponse, VideoUploadListResponse, VideoUploadUpdate, BulkDeleteRequest,
-    FrameAnalysisResponse, FrameAnalysisListResponse,
     ActivityLogResponse, ActivityLogListResponse, ActivityLogStatsResponse,
-    DocumentResponse, VideoMetadata, FrameData,
     VideoPanelItem, VideoPanelResponse
 )
-from app.models.gpt_response_schemas import GPTResponseListResponse, GPTResponseItem
 from app.utils.logger import configure_logging, logger
 from app.utils.validators import validate_file, validate_file_size
 from app.middleware.error_handler import (
@@ -54,37 +47,86 @@ from app.middleware.request_logging import RequestLoggingMiddleware
 security = HTTPBearer()
 
 # Configure logging
+# #region agent log
+try:
+    log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+    import json
+    import time
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"startup-debug","hypothesisId":"A,B,C","location":"main.py:configure_logging","message":"Module loading - before configure_logging","data":{},"timestamp":int(time.time()*1000)}) + "\n")
+except Exception as e:
+    # If logging fails, at least try to print
+    print(f"[DEBUG] Failed to write startup log: {e}")
+# #endregion
 configure_logging()
+# #region agent log
+try:
+    log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+    import json
+    import time
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"sessionId":"debug-session","runId":"startup-debug","hypothesisId":"A,B,C","location":"main.py:configure_logging","message":"Module loading - after configure_logging","data":{},"timestamp":int(time.time()*1000)}) + "\n")
+except: pass
+# #endregion
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
 # Directories
-UPLOAD_DIR = settings.UPLOAD_DIR
-OUTPUT_DIR = settings.OUTPUT_DIR
-FRAMES_DIR = settings.FRAMES_DIR
+UPLOAD_DIR = settings.UPLOAD_DIR  # Temporary storage before S3 upload
 AUDIO_DIR = settings.AUDIO_DIR
 UPLOAD_DIR.mkdir(exist_ok=True, parents=True)
-OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
-FRAMES_DIR.mkdir(exist_ok=True, parents=True)
 AUDIO_DIR.mkdir(exist_ok=True, parents=True)
 
 # Initialize services
-video_processor = VideoProcessor()
-document_generator = DocumentGenerator()
-frame_analysis_service = FrameAnalysisService(max_workers=settings.FRAME_ANALYSIS_WORKERS)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events"""
     # Startup
+    # #region agent log
+    try:
+        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+        import json
+        import time
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"startup-debug","hypothesisId":"D","location":"main.py:lifespan","message":"Lifespan startup entry","data":{"api_version":settings.API_VERSION},"timestamp":int(time.time()*1000)}) + "\n")
+    except: pass
+    # #endregion
     logger.info("Starting application", version=settings.API_VERSION)
     
     try:
+        # #region agent log
+        try:
+            log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+            import json
+            import time
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"startup-debug","hypothesisId":"D","location":"main.py:init_db","message":"Before init_db call","data":{},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
         await init_db()
+        # #region agent log
+        try:
+            log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+            import json
+            import time
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"startup-debug","hypothesisId":"D","location":"main.py:init_db","message":"After init_db call - success","data":{},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
         logger.info("Database initialized")
     except Exception as e:
+        # #region agent log
+        try:
+            log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+            import json
+            import time
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"startup-debug","hypothesisId":"D","location":"main.py:init_db","message":"init_db exception","data":{"error":str(e),"error_type":type(e).__name__},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
         logger.error("Failed to initialize database", error=str(e), exc_info=True)
         logger.error("Application will continue but database operations may fail")
         logger.error("Please check your DATABASE_URL in .env file and ensure the database is accessible")
@@ -336,7 +378,6 @@ async def api_health(db: AsyncSession = Depends(get_db)):
     import shutil
     from datetime import datetime, timezone
     from sqlalchemy import text, select, func
-    from app.database import JobStatus
     
     overall_status = "healthy"
     services = {}
@@ -425,49 +466,6 @@ async def api_health(db: AsyncSession = Depends(get_db)):
         "error": disk_error
     }
     
-    # Check Background Jobs
-    jobs_status = "operational"
-    active_jobs = 0
-    failed_jobs = 0
-    pending_jobs = 0
-    jobs_error = None
-    try:
-        # Count jobs by status
-        active_query = select(func.count(JobStatus.job_id)).where(
-            JobStatus.status.in_(["processing", "running"])
-        )
-        active_result = await db.execute(active_query)
-        active_jobs = active_result.scalar() or 0
-        
-        failed_query = select(func.count(JobStatus.job_id)).where(
-            JobStatus.status == "failed"
-        )
-        failed_result = await db.execute(failed_query)
-        failed_jobs = failed_result.scalar() or 0
-        
-        pending_query = select(func.count(JobStatus.job_id)).where(
-            JobStatus.status.in_(["pending", "queued"])
-        )
-        pending_result = await db.execute(pending_query)
-        pending_jobs = pending_result.scalar() or 0
-        
-        # If too many failed jobs, mark as degraded
-        if failed_jobs > 10:
-            jobs_status = "degraded"
-            if overall_status == "healthy":
-                overall_status = "degraded"
-    except Exception as e:
-        jobs_status = "error"
-        jobs_error = str(e)
-        logger.error("Background jobs check failed", error=str(e))
-    
-    services["background_jobs"] = {
-        "status": jobs_status,
-        "active": active_jobs,
-        "failed": failed_jobs,
-        "pending": pending_jobs,
-        "error": jobs_error
-    }
     
     return {
         "status": overall_status,
@@ -941,76 +939,31 @@ async def google_oauth_token_exchange(
 @limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
 async def upload_video(
     request: Request,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    name: Optional[str] = None,
-    application_name: Optional[str] = None,
-    tags: Optional[str] = None,  # Comma-separated string or JSON array
-    language_code: Optional[str] = None,
-    priority: Optional[str] = "normal",
+    name: Optional[str] = Form(None),
+    application_name: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),  # Comma-separated string or JSON array
+    language_code: Optional[str] = Form(None),
+    priority: Optional[str] = Form("normal"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Upload video file and start processing"""
+    """Upload video file"""
     # #region agent log
     import json
     import time
     log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
     try:
         with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"UPLOAD_ENDPOINT_ENTRY","location":"main.py:940","message":"Upload endpoint called","data":{"filename":file.filename if file else None,"name":name,"user_id":str(current_user.id) if current_user else None},"timestamp":int(time.time()*1000)}) + "\n")
+            f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"UPLOAD_ENDPOINT_ENTRY","location":"main.py:902","message":"Upload endpoint called","data":{"filename":file.filename if file else None,"name":name,"name_type":type(name).__name__,"name_is_none":name is None,"name_is_empty":name == "" if name else True,"user_id":str(current_user.id) if current_user else None},"timestamp":int(time.time()*1000)}) + "\n")
     except Exception as log_err:
         # Log to console if file logging fails
         print(f"Failed to write log: {log_err}")
     # #endregion
     try:
-        # IMPORTANT: Check OpenAI API key BEFORE accepting file upload
-        # This prevents unnecessary file storage if key is missing
-        await db.refresh(current_user)
-        
-        # Check user's encrypted API key
-        has_user_key = False
-        if current_user.openai_api_key:
-            try:
-                from app.utils.encryption import EncryptionService
-                decrypted_key = EncryptionService.decrypt(current_user.openai_api_key)
-                has_user_key = decrypted_key is not None and decrypted_key.strip() != ""
-            except Exception as e:
-                logger.warning("Failed to decrypt user API key", user_id=str(current_user.id), error=str(e))
-        
-        # Check system key
-        has_system_key = settings.OPENAI_API_KEY is not None and settings.OPENAI_API_KEY.strip() != ""
-        
-        # Check for custom GPT service (GPT_BASE_URL and GPT_BEARER_TOKEN)
-        has_custom_gpt = bool(settings.GPT_BASE_URL and settings.GPT_BEARER_TOKEN)
-        
-        # #region agent log
-        import json
-        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"API_KEY_CHECK_UPLOAD","location":"main.py:976","message":"API key check in upload endpoint","data":{"has_user_key":has_user_key,"has_system_key":has_system_key,"has_custom_gpt":has_custom_gpt,"gpt_base_url":bool(settings.GPT_BASE_URL),"gpt_bearer_token":bool(settings.GPT_BEARER_TOKEN),"gpt_base_url_value":str(settings.GPT_BASE_URL)[:50] if settings.GPT_BASE_URL else None},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-        except: pass
-        # #endregion
-        
-        if not has_user_key and not has_system_key and not has_custom_gpt:
-            # #region agent log
-            try:
-                with open(log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"API_KEY_CHECK_UPLOAD","location":"main.py:988","message":"API key check failed - raising 400","data":{"has_user_key":has_user_key,"has_system_key":has_system_key,"has_custom_gpt":has_custom_gpt},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-            except: pass
-            # #endregion
-            raise HTTPException(
-                status_code=400,
-                detail="OpenAI API key or GPT service is required to process videos. Please add your API key in Settings or configure GPT service before uploading videos."
-            )
-        
-        # Validate file (only after key check passes)
+        # Validate file
         validate_file(file)
         await validate_file_size(file)
-        
-        # Generate unique ID for this processing job
-        job_id = str(uuid.uuid4())
         
         # Use provided name or default to filename
         video_name = name or file.filename or "Untitled Video"
@@ -1044,23 +997,53 @@ async def upload_video(
         if not safe_filename:
             safe_filename = "video"
         
-        # Save uploaded file using streaming (much faster for large files)
-        file_path = UPLOAD_DIR / f"{job_id}_{safe_filename}"
+        # Get user-entered name for duplicate check and storage
+        user_entered_name = name.strip() if name and name.strip() else (file.filename or "Untitled Video")
+        
+        # Check for duplicate uploads (same original_input and user_id within last 30 seconds)
+        from datetime import timedelta, timezone
+        from sqlalchemy import select, and_
+        from app.database import VideoUpload
+        recent_duplicate = await db.execute(
+            select(VideoUpload).where(
+                and_(
+                    VideoUpload.user_id == current_user.id,
+                    VideoUpload.original_input == user_entered_name,
+                    VideoUpload.created_at >= datetime.now(timezone.utc) - timedelta(seconds=30),
+                    VideoUpload.is_deleted == False
+                )
+            ).order_by(VideoUpload.created_at.desc()).limit(1)
+        )
+        duplicate_upload = recent_duplicate.scalar_one_or_none()
+        if duplicate_upload:
+            logger.warning("Duplicate upload detected", 
+                         user_id=str(current_user.id),
+                         original_input=user_entered_name,
+                         existing_video_id=str(duplicate_upload.id))
+            raise HTTPException(
+                status_code=400,
+                detail=f"A video with the same name '{user_entered_name}' was uploaded recently. Please wait a moment or use a different name."
+            )
+        
+        # Read file to get size (needed for metadata)
+        # Reset file pointer to beginning
+        await file.seek(0)
         file_size_bytes = 0
-        async with aiofiles.open(file_path, "wb") as f:
-            # Stream file in chunks instead of loading entire file into memory
-            chunk_size = 1024 * 1024  # 1MB chunks
-            while chunk := await file.read(chunk_size):
-                await f.write(chunk)
-                file_size_bytes += len(chunk)
+        chunk_size = 1024 * 1024  # 1MB chunks
+        # Read file in chunks to calculate size
+        while chunk := await file.read(chunk_size):
+            file_size_bytes += len(chunk)
+        
+        # Reset file pointer again for S3 upload
+        await file.seek(0)
         
         file_size_mb = file_size_bytes / (1024 * 1024)
-        logger.info("File uploaded", job_id=job_id, filename=file.filename, size_mb=round(file_size_mb, 2))
+        logger.info("File ready for direct S3 upload", filename=file.filename, size_mb=round(file_size_mb, 2))
         
         # Create minimal metadata (just file size for now, extract full metadata in background)
         # Get mime type from extension
         from pathlib import Path
-        extension = Path(file_path).suffix.lower()
+        extension = Path(safe_filename).suffix.lower()
         mime_types = {
             '.mp4': 'video/mp4',
             '.avi': 'video/x-msvideo',
@@ -1082,16 +1065,26 @@ async def upload_video(
             "fps": None
         }
         
-        # Create video upload record with minimal metadata
+        # Create video upload record first (before S3 upload to get video_id)
+        # Store user-entered name in original_input, use temporary name for now
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"ORIGINAL_INPUT","location":"main.py:1008","message":"Setting original_input","data":{"name_parameter":name,"user_entered_name":user_entered_name,"file_filename":file.filename},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        
+        # Generate formatted name: {user_id}_VID_{video_id}_DATE_{YYYYMMDDHHMMSS}
+        # We need video_id first, so create with temp name, then update
         video_upload = await VideoUploadService.create_upload(
             db=db,
             user_id=current_user.id,
-            name=video_name,
+            name="temp",  # Temporary name, will be updated with formatted name
             source_type="upload",
-            video_url=str(file_path),
-            original_input=file.filename or "unknown",
+            video_url="pending",  # Placeholder, will be updated to S3 URL
+            original_input=user_entered_name,  # Store user-entered name
             status="uploaded",
-            job_id=job_id,
+            job_id=None,  # No job tracking needed for simple upload
             metadata=minimal_metadata,
             application_name=application_name,
             tags=tags_list,
@@ -1099,100 +1092,92 @@ async def upload_video(
             priority=priority or "normal"
         )
         
-        # Initialize job status in database
-        initial_status = {
-            "status": "processing",
-            "progress": 0,
-            "message": "Video uploaded, starting processing...",
-            "current_step": "upload",
-            "step_progress": {
-                "upload": "completed",
-                "extract_audio": "pending",
-                "transcribe": "pending",
-                "extract_frames": "pending",
-                "analyze_frames": "pending",
-                "summary_generation": "pending",
-                "generate_pdf": "pending",
-                "complete": "pending"
-            }
-        }
+        # Generate formatted name: {user_id}_VID_{video_id}_DATE_{YYYYMMDDHHMMSS}
+        # Keep UUID format with hyphens
+        current_time = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        sanitized_user_id = re.sub(r'[^a-zA-Z0-9_-]', '', str(current_user.id))
+        sanitized_video_id = re.sub(r'[^a-zA-Z0-9_-]', '', str(video_upload.id))
+        formatted_name = f"{sanitized_user_id}_VID_{sanitized_video_id}_DATE_{current_time}"
         
-        # #region agent log
-        import json
-        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"JOB_CREATE","location":"main.py:1091","message":"Creating job status","data":{"job_id":job_id},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-        except: pass
-        # #endregion
-        await JobService.create_job(db, job_id, initial_status)
+        # Update the name field with formatted name
+        await VideoUploadService.update_upload(
+            db=db,
+            upload_id=video_upload.id,
+            updates={"name": formatted_name},
+            user_id=current_user.id
+        )
+        # Refresh to get updated name
+        await db.refresh(video_upload)
+        
+        # Upload directly to S3 from file stream (no local file saving)
+        from app.services.s3_service import s3_service
         # #region agent log
         try:
             with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"JOB_CREATE","location":"main.py:1091","message":"Job created successfully","data":{"job_id":job_id},"timestamp":int(__import__("time").time()*1000)}) + "\n")
+                f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"G","location":"main.py:1045","message":"Before calling s3_service.upload_fileobj","data":{"user_id":str(current_user.id),"video_id":str(video_upload.id),"original_filename":file.filename or safe_filename,"file_size_bytes":file_size_bytes},"timestamp":int(time.time()*1000)}) + "\n")
         except: pass
         # #endregion
         
-        # Update upload status to processing and get the updated object
-        updated_upload = await VideoUploadService.update_upload_status(db, video_upload.id, "processing", job_id)
+        # Reset file pointer to beginning for S3 upload
+        await file.seek(0)
         
-        # Refresh the video_upload object to ensure it has the latest data
-        if updated_upload:
-            await db.refresh(updated_upload)
-            video_upload = updated_upload
+        # Create a synchronous file buffer for boto3
+        # boto3.upload_fileobj requires a synchronous file-like object
+        import io
+        # Read the entire file into memory as bytes
+        file_content = await file.read()
+        file_buffer = io.BytesIO(file_content)
+        
+        # Upload directly to S3 from file buffer (no local file saving)
+        s3_key = s3_service.upload_fileobj(
+            file_obj=file_buffer,  # Use BytesIO buffer (synchronous file-like object)
+            user_id=str(current_user.id),
+            video_id=str(video_upload.id),
+            original_filename=file.filename or safe_filename,
+            file_size_bytes=file_size_bytes
+        )
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"G","location":"main.py:1055","message":"After calling s3_service.upload_fileobj","data":{"s3_key":s3_key,"s3_key_is_none":s3_key is None},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        
+        # Update video URL to S3 if upload was successful
+        if s3_key:
+            s3_url = f"s3://{s3_service.bucket_name}/{s3_key}"
+            # #region agent log
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"G","location":"main.py:1062","message":"Updating video_url with S3 URL","data":{"s3_key":s3_key,"s3_url":s3_url,"video_id":str(video_upload.id)},"timestamp":int(time.time()*1000)}) + "\n")
+            except: pass
+            # #endregion
+            await VideoUploadService.update_upload(
+                db=db,
+                upload_id=video_upload.id,
+                updates={"video_url": s3_url},
+                user_id=current_user.id
+            )
+            # #region agent log
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"G","location":"main.py:1072","message":"Video URL updated to S3","data":{"s3_key":s3_key,"s3_url":s3_url,"video_id":str(video_upload.id)},"timestamp":int(time.time()*1000)}) + "\n")
+            except: pass
+            # #endregion
+            logger.info("Video uploaded directly to S3 and URL updated", s3_key=s3_key, video_id=str(video_upload.id))
         else:
-            # Fallback: refresh the original object
-            await db.refresh(video_upload)
-        
-        # Log activity in background (non-blocking)
-        background_tasks.add_task(
-            log_upload_activity,
-            current_user.id,
-            video_name,
-            str(video_upload.id),
-            job_id,
-            file.filename,
-            file_size_bytes,
-            get_client_ip(request)
-        )
-        
-        # Extract full metadata in background and update record
-        background_tasks.add_task(
-            extract_and_update_metadata,
-            str(file_path),
-            video_upload.id
-        )
-        
-        # Start background processing (complete pipeline: extract audio -> transcribe -> extract frames -> analyze with GPT -> store in DB)
-        logger.info("Starting background video processing task", 
-                   job_id=job_id, 
-                   upload_id=str(video_upload.id),
-                   file_path=str(file_path))
-        # #region agent log
-        import json
-        from pathlib import Path
-        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"TASK_ADDED","location":"main.py:1131","message":"Adding background task","data":{"job_id":job_id,"upload_id":str(video_upload.id),"file_path":str(file_path),"file_exists":Path(file_path).exists()},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-        except: pass
-        # #endregion
-        background_tasks.add_task(process_video_task, str(file_path), job_id, str(video_upload.id))
-        # #region agent log
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"TASK_ADDED","location":"main.py:1132","message":"Background task added successfully","data":{"job_id":job_id},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-        except: pass
-        # #endregion
+            # #region agent log
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"G","location":"main.py:1080","message":"S3 upload returned None","data":{"video_id":str(video_upload.id),"video_url":video_upload.video_url},"timestamp":int(time.time()*1000)}) + "\n")
+            except: pass
+            # #endregion
+            logger.warning("S3 upload failed", video_id=str(video_upload.id))
+            # If S3 upload fails, we still have the record but with "pending" URL
+            # This allows the user to retry or see the failed upload
         
         # Invalidate user's video panel cache since a new video was added
         CacheService.invalidate_user_cache(current_user.id)
-        
-        # Ensure job_id is in the response
-        if not video_upload.job_id:
-            video_upload.job_id = job_id
-            await db.commit()
-            await db.refresh(video_upload)
         
         return VideoUploadResponse.model_validate(video_upload)
     except HTTPException as http_err:
@@ -1228,65 +1213,6 @@ async def upload_video(
         logger.error("Upload error", error=str(e), exc_info=True)
         error_detail = str(e) if settings.DEBUG else "Failed to upload video"
         raise HTTPException(status_code=500, detail=error_detail)
-
-
-@app.get("/api/status/{job_id}")
-async def get_status(
-    job_id: str,
-    db: AsyncSession = Depends(get_db)
-):
-    """Get processing status"""
-    job_data = await JobService.get_job_dict(db, job_id)
-    
-    if not job_data:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    return JSONResponse(job_data)
-
-
-@app.get("/api/download/{job_id}")
-async def download_document(
-    job_id: str,
-    format: str = "docx",
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Download generated document in specified format"""
-    job = await JobService.get_job(db, job_id)
-    
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    if job.status != "completed":
-        raise HTTPException(status_code=400, detail="Processing not completed yet")
-    
-    # Validate format
-    if format not in ["docx", "html"]:
-        raise HTTPException(status_code=400, detail="Invalid format. Allowed: docx, html")
-    
-    # Get output file path
-    output_file = OUTPUT_DIR / f"{job_id}.{format}"
-    
-    if not output_file.exists():
-        raise HTTPException(status_code=404, detail="Document not found")
-    
-    # Log activity
-    await ActivityService.log_activity(
-        db=db,
-        user_id=current_user.id,
-        action="EXPORT_DOC",
-        description=f"User exported document: {job_id}.{format}",
-        metadata={"job_id": job_id, "format": format},
-        ip_address=get_client_ip(request)
-    )
-    
-    logger.info("Document downloaded", job_id=job_id, format=format)
-    
-    return FileResponse(
-        path=str(output_file),
-        filename=f"document_{job_id}.{format}",
-        media_type="application/octet-stream"
-    )
 
 
 # Video Upload endpoints
@@ -1367,8 +1293,12 @@ async def get_videos_panel(
     Returns videos with frame analysis statistics, suitable for displaying
     in a table/list panel similar to document management interfaces.
     """
+    # Parse tags if provided (do this first to avoid duplicate parsing)
+    tags_list = None
+    if tags:
+        tags_list = [t.strip() for t in tags.split(',')]
+    
     # Generate cache key
-    tags_list = [t.strip() for t in tags.split(',')] if tags else None
     cache_key = CacheService._generate_cache_key(
         prefix="video_panel",
         user_id=current_user.id,
@@ -1388,18 +1318,16 @@ async def get_videos_panel(
     if cached_response is not None:
         return cached_response
     
-    # Parse tags if provided
-    if tags:
-        tags_list = [t.strip() for t in tags.split(',')]
-    
     # Validate sort parameters
     if sort_by not in ["updated_at", "created_at", "name", "status"]:
         sort_by = "updated_at"
     if sort_order not in ["asc", "desc"]:
         sort_order = "desc"
     
-    # Get videos with stats
-    videos_data, total = await VideoUploadService.get_user_uploads_with_stats(
+    # Get videos with stats - add timeout protection to prevent hanging requests
+    try:
+        videos_data, total = await asyncio.wait_for(
+            VideoUploadService.get_user_uploads_with_stats(
         db=db,
         user_id=current_user.id,
         page=page,
@@ -1412,14 +1340,29 @@ async def get_videos_panel(
         tags=tags_list,
         sort_by=sort_by,
         sort_order=sort_order
+            ),
+            timeout=5.0  # 5 second timeout for database queries
+        )
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout getting videos panel for user {current_user.id}")
+        raise HTTPException(
+            status_code=504,
+            detail="Request timeout - database query took too long"
+        )
+    except Exception as e:
+        logger.error(f"Error getting videos panel: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to fetch videos"
     )
     
     # Convert to panel items
     videos = [
         VideoPanelItem(
             id=video['id'],
-            video_file_number=video['video_file_number'],
+            video_file_number=video.get('video_file_number') or None,
             name=video['name'],
+            original_input=video.get('original_input') or None,
             status=video['status'],
             created_at=video['created_at'],
             updated_at=video['updated_at'],
@@ -1634,11 +1577,10 @@ async def restore_upload(
 async def retry_upload(
     request: Request,
     upload_id: UUID,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Retry processing for a failed video upload"""
+    """Retry upload for a failed video upload"""
     upload = await VideoUploadService.get_upload(db, upload_id, current_user.id)
     
     if not upload:
@@ -1652,118 +1594,23 @@ async def retry_upload(
     if not video_path.exists():
         raise HTTPException(status_code=404, detail="Video file not found")
     
-    # Generate new job ID
-    import uuid
-    new_job_id = str(uuid.uuid4())
-    
-    # Initialize job status
-    initial_status = {
-        "status": "processing",
-        "progress": 0,
-        "message": "Retrying video processing...",
-        "current_step": "upload",
-        "step_progress": {
-            "upload": "completed",
-            "extract_audio": "pending",
-            "transcribe": "pending",
-            "extract_frames": "pending",
-            "analyze_frames": "pending",
-            "complete": "pending"
-        }
-    }
-    
-    await JobService.create_job(db, new_job_id, initial_status)
-    
-    # Update upload status to processing
-    await VideoUploadService.update_upload_status(db, upload_id, "processing", new_job_id)
+    # Update upload status to uploaded
+    await VideoUploadService.update_upload_status(db, upload_id, "uploaded", None)
     
     # Log activity
     await ActivityService.log_activity(
         db=db,
         user_id=current_user.id,
-        action="RETRY_VIDEO_PROCESSING",
-        description=f"User retried video processing: {upload_id}",
-        metadata={"upload_id": str(upload_id), "job_id": new_job_id},
+        action="RETRY_VIDEO_UPLOAD",
+        description=f"User retried video upload: {upload_id}",
+        metadata={"upload_id": str(upload_id)},
         ip_address=get_client_ip(request)
     )
     
-    # Start background processing
-    background_tasks.add_task(process_video_task, str(video_path), new_job_id, str(upload_id))
-    
-    # Refresh upload to get updated job_id
+    # Refresh upload to get updated status
     updated_upload = await VideoUploadService.get_upload(db, upload_id, current_user.id)
     
     return VideoUploadResponse.model_validate(updated_upload)
-
-
-# Frame Analysis endpoints
-@app.get("/api/videos/{video_id}/frames", response_model=FrameAnalysisListResponse)
-async def get_video_frames(
-    video_id: UUID,
-    limit: Optional[int] = Query(None, ge=1, le=1000, description="Maximum number of frames to return"),
-    offset: int = Query(0, ge=0, description="Number of frames to skip"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get frame analyses for a video
-    
-    Returns JSON list of frame analyses with descriptions and OCR text
-    """
-    # Verify video belongs to user
-    upload = await VideoUploadService.get_upload(db, video_id, current_user.id)
-    if not upload:
-        raise HTTPException(status_code=404, detail="Video not found")
-    
-    # Get frames
-    frames = await frame_analysis_service.get_video_frames(
-        db=db,
-        video_id=video_id,
-        limit=limit,
-        offset=offset
-    )
-    
-    # Get total count
-    total = await frame_analysis_service.get_frame_count(db, video_id)
-    
-    return FrameAnalysisListResponse(
-        frames=[FrameAnalysisResponse.model_validate(frame) for frame in frames],
-        total=total,
-        video_id=video_id,
-        limit=limit,
-        offset=offset
-    )
-
-
-async def process_video_frames_task(
-    video_id: UUID,
-    video_path: str
-):
-    """Background task to process video frames"""
-    from app.database import AsyncSessionLocal
-    
-    async with AsyncSessionLocal() as db:
-        try:
-            logger.info("Starting frame analysis task", video_id=str(video_id))
-            
-            # Process frames
-            frame_analyses = await frame_analysis_service.process_video_frames(
-                db=db,
-                video_id=video_id,
-                video_path=video_path,
-                frames_dir=FRAMES_DIR,
-                frames_per_second=settings.FRAMES_PER_SECOND
-            )
-            
-            logger.info("Frame analysis task completed",
-                       video_id=str(video_id),
-                       frames_analyzed=len(frame_analyses))
-            
-        except Exception as e:
-            logger.error("Frame analysis task failed",
-                        video_id=str(video_id),
-                        error=str(e),
-                        exc_info=True)
 
 
 # Activity Log endpoints
@@ -1935,91 +1782,6 @@ async def get_activity_log(
     )
 
 
-# User Settings endpoints
-@app.get("/api/settings/prompt")
-async def get_user_prompt(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get the current user's custom ANALYSIS RULES section"""
-    from app.services.gpt_service import GPTService
-    gpt_service = GPTService()
-    
-    # Refresh user from database to get latest prompt
-    await db.refresh(current_user)
-    
-    # Get default ANALYSIS RULES for reference
-    default_analysis_rules = gpt_service.get_default_analysis_rules()
-    
-    return {
-        "analysis_rules": current_user.frame_analysis_prompt or default_analysis_rules,
-        "has_custom_prompt": current_user.frame_analysis_prompt is not None,
-        "default_analysis_rules": default_analysis_rules
-    }
-
-
-@app.put("/api/settings/prompt")
-async def update_user_prompt(
-    request: Request,
-    prompt_data: dict,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Update the current user's custom ANALYSIS RULES section"""
-    analysis_rules = prompt_data.get("analysis_rules", "").strip()
-    
-    # If empty string or matches default, set to None to use default prompt
-    from app.services.gpt_service import GPTService
-    gpt_service = GPTService()
-    default_analysis_rules = gpt_service.get_default_analysis_rules()
-    
-    if not analysis_rules or analysis_rules == default_analysis_rules:
-        analysis_rules = None
-    
-    # Update user's ANALYSIS RULES
-    current_user.frame_analysis_prompt = analysis_rules
-    await db.commit()
-    await db.refresh(current_user)
-    
-    # Log activity
-    from app.services.activity_service import ActivityService
-    await ActivityService.log_activity(
-        db=db,
-        user_id=current_user.id,
-        action="UPDATE_PROMPT",
-        description="Updated frame analysis ANALYSIS RULES",
-        ip_address=get_client_ip(request)
-    )
-    
-    return {
-        "message": "Analysis rules updated successfully",
-        "analysis_rules": current_user.frame_analysis_prompt or default_analysis_rules,
-        "has_custom_prompt": current_user.frame_analysis_prompt is not None
-    }
-
-
-@app.get("/api/settings/prompt/default")
-async def get_default_prompt(
-    current_user: User = Depends(get_current_user)
-):
-    """Get the default prompt template and ANALYSIS RULES from prompt.txt file"""
-    try:
-        from app.services.gpt_service import GPTService
-        gpt_service = GPTService()
-        
-        default_analysis_rules = gpt_service.get_default_analysis_rules()
-        full_prompt = gpt_service.prompt_template
-        
-        return {
-            "full_prompt": full_prompt,
-            "analysis_rules": default_analysis_rules,
-            "source": "prompt.txt"
-        }
-    except Exception as e:
-        logger.error("Failed to load default prompt", error=str(e))
-        raise HTTPException(status_code=500, detail="Failed to load default prompt")
-
-
 @app.get("/api/settings/openai-key")
 async def get_user_openai_key(
     current_user: User = Depends(get_current_user),
@@ -2145,21 +1907,15 @@ async def update_user_openai_key(
     }
 
 
-# GPT Response endpoints
-@app.get("/api/videos/file-number/{video_file_number}/gpt-responses", response_model=GPTResponseListResponse)
-async def get_gpt_responses_by_file_number(
+@app.get("/api/videos/file-number/{video_file_number}/status", response_model=VideoUploadResponse)
+async def get_video_status_by_file_number(
     video_file_number: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get all GPT responses for a video by video file number
-    
-    Returns all frame analyses with GPT responses for the specified video file number.
-    """
+    """Get video status by video file number"""
     from app.services.video_file_number_service import VideoFileNumberService
     
-    # Get video upload by file number
     upload = await VideoFileNumberService.get_upload_by_file_number(
         db, video_file_number, str(current_user.id)
     )
@@ -2167,32 +1923,7 @@ async def get_gpt_responses_by_file_number(
     if not upload:
         raise HTTPException(status_code=404, detail="Video not found")
     
-    # Get all GPT responses for this video
-    frame_analyses = await frame_analysis_service.get_gpt_responses_by_video_file_number(
-        db=db,
-        video_file_number=video_file_number,
-        user_id=current_user.id
-    )
-    
-    return GPTResponseListResponse(
-        video_file_number=video_file_number,
-        video_id=upload.id,
-        video_name=upload.name,
-        total_responses=len(frame_analyses),
-        responses=[
-            GPTResponseItem(
-                frame_id=fa.id,
-                timestamp=fa.timestamp,
-                frame_number=fa.frame_number,
-                image_path=fa.image_path,
-                description=fa.description,
-                ocr_text=fa.ocr_text,
-                gpt_response=fa.gpt_response,
-                processing_time_ms=fa.processing_time_ms,
-                created_at=fa.created_at
-            ) for fa in frame_analyses
-        ]
-    )
+    return VideoUploadResponse.model_validate(upload)
 
 
 @app.get("/api/videos/file-number/{video_file_number}/audio")
@@ -2225,180 +1956,555 @@ async def get_audio_file(
     )
 
 
-@app.get("/api/videos/file-number/{video_file_number}/document", response_model=DocumentResponse)
-async def get_document_by_file_number(
-    request: Request,
-    video_file_number: str,
-    include_images: bool = Query(True, description="Include base64 images in response (can be slow for many frames)"),
+@app.get("/api/videos/{video_id}/frames")
+async def get_video_frames(
+    video_id: UUID,
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Maximum number of frames to return"),
+    offset: int = Query(0, ge=0, description="Number of frames to skip"),
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    background_tasks: BackgroundTasks = BackgroundTasks()
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Get complete document/data for a video file number
+    Get frame analyses for a video from the frame_analyses database table
     
-    Returns all frame analyses, GPT responses, video metadata, and summary statistics.
-    This is the main endpoint to fetch all data for a video file once processing is complete.
-    
-    Args:
-        include_images: If False, excludes base64_image from response (faster, smaller payload)
+    Returns a list of frame analyses with descriptions, OCR text, timestamps, and images.
     """
-    # Generate cache key (include include_images in key to cache separately)
-    cache_key = CacheService._generate_cache_key(
-        prefix="document_data",
-        user_id=current_user.id,
-        video_file_number=video_file_number,
-        include_images=include_images
-    )
+    from sqlalchemy import select, func
     
-    # Try to get from cache
-    cached_response = CacheService.get(cache_key, "document_data")
-    if cached_response is not None:
-        return cached_response
-    
-    # Get complete document data (with option to exclude images for faster response)
-    document_data = await frame_analysis_service.get_complete_document_data(
-        db=db,
-        video_file_number=video_file_number,
-        user_id=current_user.id,
-        include_base64_images=include_images
-    )
-    
-    if not document_data:
+    # Verify the video belongs to the current user
+    upload = await VideoUploadService.get_upload(db, video_id, current_user.id)
+    if not upload:
         raise HTTPException(status_code=404, detail="Video not found")
     
-    upload = document_data["video_metadata"]
-    frames = document_data["frames"]
+    # For MySQL/SQL Server, use raw SQL for UUID comparison
+    from app.database import _is_mysql, _is_sql_server
+    from sqlalchemy import text as sql_text
     
-    # Get transcript from job status if job_id exists (optimize: only fetch transcript field)
+    video_id_str = str(video_id)
+    frames = []
+    total = 0
+    
+    if _is_mysql or _is_sql_server:
+        # Use raw SQL for MySQL/SQL Server to handle UUID comparison correctly
+        if _is_mysql:
+            # MySQL query
+            limit_clause = f"LIMIT {limit}" if limit else ""
+            offset_clause = f"OFFSET {offset}" if offset else ""
+            frames_query = sql_text(f"""
+                SELECT * FROM frame_analyses 
+                WHERE video_id = :video_id 
+                ORDER BY timestamp ASC
+                {limit_clause}
+                {offset_clause}
+            """)
+        else:
+            # SQL Server query
+            if limit:
+                frames_query = sql_text(f"""
+                    SELECT TOP {limit} * FROM frame_analyses 
+                    WHERE video_id = :video_id 
+                    ORDER BY timestamp ASC
+                    {f'OFFSET {offset} ROWS' if offset else ''}
+                """)
+            else:
+                frames_query = sql_text(f"""
+                    SELECT * FROM frame_analyses 
+                    WHERE video_id = :video_id 
+                    ORDER BY timestamp ASC
+                    {f'OFFSET {offset} ROWS' if offset else ''}
+                """)
+        
+        count_query = sql_text("""
+            SELECT COUNT(*) FROM frame_analyses WHERE video_id = :video_id
+        """)
+        
+        # Execute frames query
+        frames_result = await db.execute(frames_query, {"video_id": video_id_str})
+        frames_rows = frames_result.fetchall()
+        
+        # Convert rows to FrameAnalysis objects
+        for row in frames_rows:
+            frame = FrameAnalysis()
+            for key, value in row._mapping.items():
+                setattr(frame, key, value)
+            frames.append(frame)
+        
+        # Execute count query
+        count_result = await db.execute(count_query, {"video_id": video_id_str})
+        total = count_result.scalar() or 0
+        
+        logger.info(f"Found {len(frames)} frames (total: {total}) for video_id {video_id} using raw SQL")
+    else:
+        # PostgreSQL: Use ORM query
+        query = select(FrameAnalysis).where(
+            FrameAnalysis.video_id == video_id
+        ).order_by(FrameAnalysis.timestamp.asc())
+        
+        if limit:
+            query = query.limit(limit)
+        if offset:
+            query = query.offset(offset)
+        
+        result = await db.execute(query)
+        frames = result.scalars().all()
+        
+        count_query = select(func.count(FrameAnalysis.id)).where(
+            FrameAnalysis.video_id == video_id
+        )
+        count_result = await db.execute(count_query)
+        total = count_result.scalar() or 0
+        
+        logger.info(f"Found {len(frames)} frames (total: {total}) for video_id {video_id} using ORM query")
+    
+    # Format response
+    frames_data = []
+    for frame in frames:
+        frame_dict = {
+            "id": str(frame.id),
+            "video_id": str(frame.video_id),
+            "timestamp": frame.timestamp,
+            "frame_number": frame.frame_number,
+            "image_path": frame.image_path,
+            "base64_image": frame.base64_image,
+            "description": frame.description,
+            "ocr_text": frame.ocr_text,
+            "gpt_response": frame.gpt_response,
+            "processing_time_ms": frame.processing_time_ms,
+            "created_at": frame.created_at.isoformat() if frame.created_at else None
+        }
+        frames_data.append(frame_dict)
+    
+    return {
+        "frames": frames_data,
+        "total": total,
+        "video_id": str(video_id),
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@app.get("/api/videos/{video_id}/transcript")
+async def get_video_transcript(
+    video_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get transcript for a video from the job_status table
+    
+    Returns the most recent transcript from job_status for the given video_id.
+    """
+    from sqlalchemy import select, text
+    from app.database import JobStatus
+    
+    # Verify the video belongs to the current user
+    upload = await VideoUploadService.get_upload(db, video_id, current_user.id)
+    if not upload:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    # Try to get transcript from job_status table
+    # First, try direct query by video_id (as per user's SQL query)
     transcript = None
-    if upload.job_id:
-        from app.database import JobStatus
-        from sqlalchemy import select
-        job_query = select(JobStatus.transcript).where(JobStatus.job_id == upload.job_id)
-        job_result = await db.execute(job_query)
-        transcript = job_result.scalar_one_or_none()
     
-    # Log activity in background (non-blocking) to reduce latency
-    background_tasks.add_task(
-        _log_document_fetch_activity,
-        user_id=current_user.id,
-        video_file_number=video_file_number,
-        video_id=str(upload.id),
-        total_frames=document_data["total_frames"],
-        frames_with_gpt=document_data["frames_with_gpt"],
-        ip_address=get_client_ip(request)
-    )
-    
-    response = DocumentResponse(
-        video_file_number=video_file_number,
-        video_metadata=VideoMetadata(
-            video_id=upload.id,
-            video_file_number=upload.video_file_number,
-            name=upload.name,
-            status=upload.status,
-            video_length_seconds=upload.video_length_seconds,
-            video_size_bytes=upload.video_size_bytes,
-            resolution_width=upload.resolution_width,
-            resolution_height=upload.resolution_height,
-            fps=upload.fps,
-            application_name=upload.application_name,
-            tags=upload.tags,
-            language_code=upload.language_code,
-            priority=upload.priority,
-            audio_url=upload.audio_url,
-            created_at=upload.created_at,
-            updated_at=upload.updated_at
-        ),
-        total_frames=document_data["total_frames"],
-        frames_with_gpt=document_data["frames_with_gpt"],
-        frames=[
-            FrameData(
-                frame_id=fa.id,
-                timestamp=fa.timestamp,
-                frame_number=fa.frame_number,
-                image_path=fa.image_path,
-                base64_image=fa.base64_image,
-                description=fa.description,
-                ocr_text=fa.ocr_text,
-                gpt_response=fa.gpt_response,
-                processing_time_ms=fa.processing_time_ms,
-                created_at=fa.created_at
-            ) for fa in frames
-        ],
-        summary=document_data["summary"],
-        transcript=transcript,
-        created_at=datetime.utcnow()
-    )
-    
-    # Cache the response (only if status is completed to avoid caching incomplete data)
-    if upload.status == "completed":
-        CacheService.set(cache_key, response, "document_data")
-    
-    return response
-
-
-async def _log_document_fetch_activity(
-    user_id: UUID,
-    video_file_number: str,
-    video_id: str,
-    total_frames: int,
-    frames_with_gpt: int,
-    ip_address: Optional[str]
-):
-    """Background task to log document fetch activity without blocking response"""
     try:
-        from app.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as session:
-            await ActivityService.log_activity(
-                db=session,
-                user_id=user_id,
-                action="FETCH_DOCUMENT",
-                description=f"User fetched document for video: {video_file_number}",
-                metadata={
-                    "video_file_number": video_file_number,
-                    "video_id": video_id,
-                    "total_frames": total_frames,
-                    "frames_with_gpt": frames_with_gpt
-                },
-                ip_address=ip_address
-            )
-            await session.commit()
+        # Query job_status by video_id directly (matches user's SQL query)
+        is_sql_server = "mssql" in settings.DATABASE_URL.lower()
+        is_mysql = "mysql" in settings.DATABASE_URL.lower()
+        
+        if is_mysql:
+            # MySQL: Query with video_id
+            query_text = text("""
+                SELECT transcript 
+                FROM job_status 
+                WHERE video_id = :video_id 
+                ORDER BY created_at DESC 
+                LIMIT 1
+            """)
+        elif is_sql_server:
+            # SQL Server: Query with video_id
+            query_text = text("""
+                SELECT TOP 1 transcript 
+                FROM job_status 
+                WHERE video_id = :video_id 
+                ORDER BY created_at DESC
+            """)
+        else:
+            # PostgreSQL
+            query_text = text("""
+                SELECT transcript 
+                FROM job_status 
+                WHERE video_id = :video_id 
+                ORDER BY created_at DESC 
+                LIMIT 1
+            """)
+        
+        result = await db.execute(query_text, {"video_id": str(video_id)})
+        transcript = result.scalar_one_or_none()
     except Exception as e:
-        logger.warning("Failed to log document fetch activity", error=str(e))
-
-
-async def log_upload_activity(
-    user_id: UUID,
-    video_name: str,
-    upload_id: str,
-    job_id: str,
-    filename: Optional[str],
-    file_size_bytes: int,
-    ip_address: Optional[str]
-):
-    """Background task to log upload activity"""
-    from app.database import AsyncSessionLocal
+        # If video_id column doesn't exist, try via job_id as fallback
+        logger.debug("Could not query job_status by video_id, trying job_id fallback", error=str(e))
+        
+        if upload.job_id:
+            # Fallback: Query job_status by job_id
+            query = select(JobStatus.transcript).where(
+                JobStatus.job_id == upload.job_id
+            ).order_by(JobStatus.created_at.desc()).limit(1)
+            
+            result = await db.execute(query)
+            transcript = result.scalar_one_or_none()
     
-    async with AsyncSessionLocal() as db:
+    return {
+        "video_id": str(video_id),
+        "transcript": transcript if transcript else None,
+        "has_transcript": bool(transcript and transcript.strip())
+    }
+
+
+@app.get("/api/videos/{video_id}/document")
+async def get_video_document_by_id(
+    video_id: UUID,
+    include_images: bool = Query(True, description="Include base64 images in response"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get video documentation by video ID (alternative to file-number endpoint)
+    
+    Returns documentation_data which is a JSON array with:
+    [
+      {
+        "image": "base64_encoded_annotated_image_string",
+        "description": "~300 words of documentation text explaining the step",
+        "step_number": 1
+      },
+      ...
+    ]
+    """
+    # #region agent log
+    try:
+        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+        import json
+        import time
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"main.py:get_video_document_by_id","message":"API endpoint entry (by video_id)","data":{"video_id":str(video_id),"include_images":include_images,"user_id":str(current_user.id)},"timestamp":int(time.time()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    from sqlalchemy import select
+    from uuid import UUID as UUIDType
+                
+    # #region agent log - Before service call
+    try:
+        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+        import json
+        import time
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"main.py:get_video_document_by_id","message":"Before get_upload call","data":{"video_id":str(video_id),"video_id_type":type(video_id).__name__,"video_id_is_uuid":isinstance(video_id,UUIDType),"user_id":str(current_user.id),"user_id_type":type(current_user.id).__name__,"user_id_is_uuid":isinstance(current_user.id,UUIDType)},"timestamp":int(time.time()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    
+    # Get the video upload by ID - try with user filter first, then without if needed
+    upload = await VideoUploadService.get_upload(db, video_id, current_user.id)
+    # #region agent log
+    try:
+        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+        import json
+        import time
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"main.py:get_video_document_by_id","message":"Video lookup result (by ID with user filter)","data":{"found":upload is not None,"upload_id":str(upload.id) if upload else None,"video_file_number":upload.video_file_number if upload else None,"video_user_id":str(upload.user_id) if upload else None},"timestamp":int(time.time()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    
+    # If not found with user filter, try without user filter to check if video exists
+    if not upload:
+        # #region agent log
         try:
-            await ActivityService.log_activity(
-                db=db,
-                user_id=user_id,
-                action="UPLOAD_VIDEO",
-                description=f"User uploaded video: {video_name}",
-                metadata={
-                    "upload_id": upload_id,
-                    "job_id": job_id,
-                    "filename": filename,
-                    "size_bytes": file_size_bytes
-                },
-                ip_address=ip_address
-            )
-        except Exception as e:
-            logger.error("Failed to log upload activity", 
-                       upload_id=upload_id, 
-                       error=str(e))
+            log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+            import json
+            import time
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"main.py:get_video_document_by_id","message":"Video not found with user filter, trying without","data":{"video_id":str(video_id),"user_id":str(current_user.id)},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        upload_without_filter = await VideoUploadService.get_upload(db, video_id, None)
+        # #region agent log
+        try:
+            log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+            import json
+            import time
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"main.py:get_video_document_by_id","message":"Video lookup without user filter","data":{"found":upload_without_filter is not None,"upload_id":str(upload_without_filter.id) if upload_without_filter else None,"video_user_id":str(upload_without_filter.user_id) if upload_without_filter else None,"requested_user_id":str(current_user.id)},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        
+        if upload_without_filter:
+            # Video exists but belongs to different user - return 403 Forbidden
+            logger.warning(f"Video {video_id} belongs to different user. Requested by: {current_user.id}, Owner: {upload_without_filter.user_id}")
+            raise HTTPException(status_code=403, detail="Access denied: Video does not belong to you")
+    
+    if not upload:
+        logger.warning(f"Video not found for video_id: {video_id}, user_id: {current_user.id}")
+        raise HTTPException(status_code=404, detail=f"Video not found")
+    
+    logger.info(f"Looking for documentation for video_id: {upload.id}, video_file_number: {upload.video_file_number}")
+    
+    # Query the video_documentation table
+    query = select(VideoDocumentation).where(
+        VideoDocumentation.video_id == upload.id
+    )
+    result = await db.execute(query)
+    documentation = result.scalar_one_or_none()
+    # #region agent log
+    try:
+        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+        import json
+        import time
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"main.py:get_video_document_by_id","message":"Documentation query result (by ID)","data":{"found":documentation is not None,"video_id":str(upload.id),"num_images":documentation.num_images if documentation else None},"timestamp":int(time.time()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    if not documentation:
+        logger.warning(f"Documentation not found for video_id: {upload.id}")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Documentation not found for this video. Video ID: {upload.id}"
+        )
+    
+    logger.info(f"Found documentation for video_id: {upload.id}, num_images: {documentation.num_images}")
+    
+    # Parse documentation_data (it's stored as JSON or LONGTEXT)
+    import json
+    if isinstance(documentation.documentation_data, str):
+        try:
+            doc_data = json.loads(documentation.documentation_data)
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse documentation_data as JSON for video {upload.id}")
+            raise HTTPException(status_code=500, detail="Invalid documentation data format")
+    else:
+        doc_data = documentation.documentation_data
+    
+    # Ensure doc_data is a list
+    if not isinstance(doc_data, list):
+        logger.warning(f"documentation_data is not a list for video {upload.id}, converting")
+        doc_data = [doc_data] if doc_data else []
+    
+    # If include_images is False, remove image data from response
+    if not include_images:
+        doc_data = [
+            {k: v for k, v in item.items() if k != "image"}
+            for item in doc_data
+        ]
+    
+    # Log activity
+    try:
+        await ActivityService.log_activity(
+            db=db,
+            user_id=current_user.id,
+            action="view_document",
+            description=f"Viewed documentation for video {upload.video_file_number or upload.id}",
+            metadata={
+                "video_id": str(upload.id),
+                "video_file_number": upload.video_file_number,
+                "num_steps": len(doc_data),
+                "include_images": include_images
+            }
+        )
+    except Exception as e:
+        logger.warning(f"Failed to log document view activity: {e}")
+    
+    # Return the documentation data
+    response_data = {
+        "video_id": str(upload.id),
+        "video_file_number": upload.video_file_number,
+        "documentation_data": doc_data,
+        "sprite_sheet_base64": documentation.sprite_sheet_base64 if include_images else None,
+        "num_images": documentation.num_images,
+        "created_at": documentation.created_at.isoformat() if documentation.created_at else None,
+        "updated_at": documentation.updated_at.isoformat() if documentation.updated_at else None
+    }
+    # #region agent log
+    try:
+        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+        import json
+        import time
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"main.py:get_video_document_by_id","message":"Returning response (by ID)","data":{"responseKeys":list(response_data.keys()),"docDataLength":len(doc_data),"numImages":response_data["num_images"]},"timestamp":int(time.time()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    return response_data
+
+
+@app.get("/api/videos/file-number/{video_file_number}/document")
+async def get_video_document(
+    video_file_number: str,
+    include_images: bool = Query(True, description="Include base64 images in response"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get video documentation by video file number
+    
+    Returns documentation_data which is a JSON array with:
+    [
+      {
+        "image": "base64_encoded_annotated_image_string",
+        "description": "~300 words of documentation text explaining the step",
+        "step_number": 1
+      },
+      ...
+    ]
+    """
+    # #region agent log
+    try:
+        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+        import json
+        import time
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"main.py:get_video_document","message":"API endpoint entry","data":{"video_file_number":video_file_number,"include_images":include_images,"user_id":str(current_user.id)},"timestamp":int(time.time()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    from app.services.video_file_number_service import VideoFileNumberService
+    from sqlalchemy import select
+    
+    # Get the video upload by file number
+    upload = await VideoFileNumberService.get_upload_by_file_number(
+        db, video_file_number, str(current_user.id)
+    )
+    # #region agent log
+    try:
+        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+        import json
+        import time
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"main.py:get_video_document","message":"Video lookup result","data":{"found":upload is not None,"upload_id":str(upload.id) if upload else None,"video_file_number":video_file_number},"timestamp":int(time.time()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    if not upload:
+        logger.warning(f"Video not found for video_file_number: {video_file_number}, user_id: {current_user.id}")
+        # #region agent log
+        try:
+            log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+            import json
+            import time
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"main.py:get_video_document","message":"Video not found - returning 404","data":{"video_file_number":video_file_number,"user_id":str(current_user.id)},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        raise HTTPException(status_code=404, detail=f"Video not found for file number: {video_file_number}")
+    
+    logger.info(f"Looking for documentation for video_id: {upload.id}, video_file_number: {video_file_number}")
+    
+    # Query the video_documentation table
+    query = select(VideoDocumentation).where(
+        VideoDocumentation.video_id == upload.id
+    )
+    result = await db.execute(query)
+    documentation = result.scalar_one_or_none()
+    # #region agent log
+    try:
+        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+        import json
+        import time
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"main.py:get_video_document","message":"Documentation query result","data":{"found":documentation is not None,"video_id":str(upload.id),"num_images":documentation.num_images if documentation else None},"timestamp":int(time.time()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    if not documentation:
+        logger.warning(f"Documentation not found for video_id: {upload.id}, video_file_number: {video_file_number}")
+        # #region agent log
+        try:
+            log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+            import json
+            import time
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"main.py:get_video_document","message":"Documentation not found - returning 404","data":{"video_id":str(upload.id),"video_file_number":video_file_number},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        # Return a more helpful error message
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Documentation not found for this video. Video ID: {upload.id}, File Number: {video_file_number}"
+        )
+    
+    logger.info(f"Found documentation for video_id: {upload.id}, num_images: {documentation.num_images}")
+    
+    # Parse documentation_data (it's stored as JSON or LONGTEXT)
+    import json
+    if isinstance(documentation.documentation_data, str):
+        try:
+            doc_data = json.loads(documentation.documentation_data)
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse documentation_data as JSON for video {upload.id}")
+            raise HTTPException(status_code=500, detail="Invalid documentation data format")
+    else:
+        doc_data = documentation.documentation_data
+    
+    # Ensure doc_data is a list
+    if not isinstance(doc_data, list):
+        logger.warning(f"documentation_data is not a list for video {upload.id}, converting")
+        doc_data = [doc_data] if doc_data else []
+    
+    # If include_images is False, remove image data from response
+    if not include_images:
+        doc_data = [
+            {k: v for k, v in item.items() if k != "image"}
+            for item in doc_data
+        ]
+    
+    # Log activity
+    try:
+        await ActivityService.log_activity(
+            db=db,
+            user_id=current_user.id,
+            action="view_document",
+            description=f"Viewed documentation for video {video_file_number}",
+            metadata={
+                "video_id": str(upload.id),
+                "video_file_number": video_file_number,
+                "num_steps": len(doc_data),
+                "include_images": include_images
+            }
+        )
+    except Exception as e:
+        logger.warning(f"Failed to log document view activity: {e}")
+    
+    # Return the documentation data
+    response_data = {
+        "video_id": str(upload.id),
+        "video_file_number": video_file_number,
+        "documentation_data": doc_data,
+        "sprite_sheet_base64": documentation.sprite_sheet_base64 if include_images else None,
+        "num_images": documentation.num_images,
+        "created_at": documentation.created_at.isoformat() if documentation.created_at else None,
+        "updated_at": documentation.updated_at.isoformat() if documentation.updated_at else None
+    }
+    # #region agent log
+    try:
+        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+        import json
+        import time
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"main.py:get_video_document","message":"Returning response","data":{"responseKeys":list(response_data.keys()),"docDataLength":len(doc_data),"numImages":response_data["num_images"]},"timestamp":int(time.time()*1000)}) + "\n")
+    except: pass
+    # #endregion
+    return response_data
+
+
+
+
+
+
+
+
+async def _cleanup_local_file(file_path: str):
+    """Background task to delete local file after S3 upload"""
+    try:
+        from pathlib import Path
+        path = Path(file_path)
+        if path.exists():
+            path.unlink()
+            logger.info("Local file deleted after S3 upload", file_path=file_path)
+    except Exception as e:
+        logger.warning("Failed to delete local file", file_path=file_path, error=str(e))
 
 
 async def extract_and_update_metadata(video_path: str, upload_id: UUID):
@@ -2407,8 +2513,44 @@ async def extract_and_update_metadata(video_path: str, upload_id: UUID):
     
     async with AsyncSessionLocal() as db:
         try:
+            # Check if video_path is S3 URL - if so, download temporarily for metadata extraction
+            from app.services.s3_service import s3_service
+            local_path = video_path
+            temp_download = False
+            
+            if video_path.startswith('s3://'):
+                # Extract S3 key from URL
+                s3_key = s3_service.get_s3_key_from_url(video_path)
+                if s3_key:
+                    # Download to temp location for metadata extraction
+                    import tempfile
+                    temp_dir = Path(tempfile.gettempdir()) / "video_metadata"
+                    temp_dir.mkdir(exist_ok=True)
+                    local_path = temp_dir / f"{upload_id}.{Path(video_path).suffix or 'mp4'}"
+                    
+                    if s3_service.download_file(s3_key, str(local_path)):
+                        temp_download = True
+                        logger.info("Downloaded video from S3 for metadata extraction", 
+                                   upload_id=str(upload_id),
+                                   s3_key=s3_key)
+                    else:
+                        logger.warning("Failed to download video from S3 for metadata extraction", 
+                                     upload_id=str(upload_id))
+                        return
+            
             # Extract full metadata
-            metadata = VideoMetadataService.extract_metadata(video_path)
+            metadata = VideoMetadataService.extract_metadata(local_path)
+            
+            # Clean up temporary download if we downloaded from S3
+            if temp_download:
+                try:
+                    Path(local_path).unlink()
+                    logger.info("Temporary download deleted after metadata extraction", 
+                               upload_id=str(upload_id))
+                except Exception as e:
+                    logger.warning("Failed to delete temporary download", 
+                                   upload_id=str(upload_id),
+                                 error=str(e))
             
             # Update video upload record with full metadata
             from sqlalchemy import update
@@ -2434,412 +2576,10 @@ async def extract_and_update_metadata(video_path: str, upload_id: UUID):
         except Exception as e:
             logger.error("Failed to extract and update metadata", 
                        upload_id=str(upload_id), 
-                       error=str(e),
+                       error=str(e), 
                        exc_info=True)
+                
 
-
-async def process_video_task(file_path: str, job_id: str, upload_id: Optional[str] = None):
-    """
-    Production-ready background task to process video:
-    1. Extract audio and transcribe using OpenAI Whisper
-    2. Extract keyframes (1 every 2 seconds)
-    3. Process frames in batches of 5 through ChatGPT 4o Mini
-    4. Store everything in database
-    """
-    # #region agent log
-    import json
-    import time
-    import traceback
-    from pathlib import Path
-    log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-    try:
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"TASK_EXECUTING","location":"main.py:2441","message":"Background task function executing","data":{"job_id":job_id,"upload_id":upload_id,"file_path":file_path,"file_exists":Path(file_path).exists() if file_path else False},"timestamp":int(time.time()*1000)}) + "\n")
-    except Exception as log_err:
-        print(f"Failed to write task entry log: {log_err}")
-    # #endregion
-    
-    from app.database import AsyncSessionLocal
-    from app.services.video_processing_service import VideoProcessingService
-    
-    logger.info("Background video processing task started", 
-               job_id=job_id, 
-               upload_id=upload_id,
-               file_path=file_path)
-    
-    # Wrap entire task execution in try-except to catch any top-level errors
-    try:
-        # Verify file exists
-        if not Path(file_path).exists():
-            # #region agent log
-            import json
-            log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-            try:
-                with open(log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"FILE_NOT_FOUND","location":"main.py:2473","message":"Video file not found","data":{"job_id":job_id,"file_path":file_path,"file_exists":False},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-            except: pass
-            # #endregion
-            logger.error("Video file not found", job_id=job_id, file_path=file_path)
-            async with AsyncSessionLocal() as db:
-                await JobService.update_job(db, job_id, {
-                    "status": "failed",
-                    "message": f"Video file not found: {file_path}",
-                    "error": "File not found"
-                })
-            return
-        
-        async with AsyncSessionLocal() as db:
-            try:
-                # Check if OpenAI API key is available before starting processing
-                from app.database import User, VideoUpload
-                from sqlalchemy import select
-                from app.utils.encryption import EncryptionService
-                
-                # Get user_id from video upload
-                user_id = None
-                if upload_id:
-                    from uuid import UUID
-                    try:
-                        video_uuid = UUID(upload_id)
-                        result = await db.execute(
-                            select(VideoUpload.user_id).where(VideoUpload.id == video_uuid)
-                        )
-                        user_id = result.scalar_one_or_none()
-                    except Exception as e:
-                        logger.warning("Failed to get user_id from upload", upload_id=upload_id, error=str(e))
-                
-                # Check if user has API key
-                has_user_key = False
-                if user_id:
-                    try:
-                        result = await db.execute(
-                            select(User.openai_api_key).where(User.id == user_id)
-                        )
-                        encrypted_key = result.scalar_one_or_none()
-                        if encrypted_key:
-                            decrypted_key = EncryptionService.decrypt(encrypted_key)
-                            has_user_key = decrypted_key is not None and decrypted_key.strip() != ""
-                    except Exception as e:
-                        logger.warning("Failed to check user API key", user_id=str(user_id), error=str(e))
-                
-                # Check system key
-                has_system_key = settings.OPENAI_API_KEY is not None and settings.OPENAI_API_KEY.strip() != ""
-                
-                # Check for custom GPT service (GPT_BASE_URL and GPT_BEARER_TOKEN)
-                has_custom_gpt = bool(settings.GPT_BASE_URL and settings.GPT_BEARER_TOKEN)
-                
-                # #region agent log
-                import json
-                log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"API_KEY_CHECK","location":"main.py:2447","message":"API key check result","data":{"job_id":job_id,"has_user_key":has_user_key,"has_system_key":has_system_key,"has_custom_gpt":has_custom_gpt,"gpt_base_url":bool(settings.GPT_BASE_URL),"gpt_bearer_token":bool(settings.GPT_BEARER_TOKEN)},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-                except: pass
-                # #endregion
-                
-                if not has_user_key and not has_system_key and not has_custom_gpt:
-                    # #region agent log
-                    import json
-                    log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-                    try:
-                        with open(log_path, "a", encoding="utf-8") as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"NO_API_KEY","location":"main.py:2491","message":"No API key available (user/system/custom)","data":{"job_id":job_id,"upload_id":upload_id,"user_id":str(user_id) if user_id else None,"has_user_key":has_user_key,"has_system_key":has_system_key,"has_custom_gpt":has_custom_gpt,"gpt_base_url":bool(settings.GPT_BASE_URL),"gpt_bearer_token":bool(settings.GPT_BEARER_TOKEN)},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-                    except: pass
-                    # #endregion
-                    error_message = "OpenAI API key is required to process videos. Please add your API key in Settings."
-                    logger.error("No OpenAI API key available", job_id=job_id, upload_id=upload_id, user_id=str(user_id) if user_id else None)
-                    await JobService.update_job(db, job_id, {
-                        "status": "failed",
-                        "message": error_message,
-                        "error": error_message
-                    })
-                    # Update upload status to failed
-                    if upload_id:
-                        try:
-                            from app.services.video_upload_service import VideoUploadService
-                            await VideoUploadService.update_upload_status(db, video_uuid, "failed", job_id)
-                        except Exception as e:
-                            logger.error("Failed to update upload status", error=str(e))
-                    return
-                
-                # Immediately update job status to show processing has started
-                logger.info("Updating job status to show processing started", job_id=job_id)
-                # #region agent log
-                import json
-                log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"JOB_STATUS_UPDATE","location":"main.py:2472","message":"Updating job status to processing","data":{"job_id":job_id},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-                except: pass
-                # #endregion
-                try:
-                    await JobService.update_job(db, job_id, {
-                    "progress": 5,
-                    "message": "Video uploaded successfully. Starting processing...",
-                    "current_step": "extract_audio",
-                    "step_progress": {
-                        "upload": "completed",
-                        "extract_audio": "processing",
-                        "transcribe": "pending",
-                        "extract_frames": "pending",
-                        "analyze_frames": "pending",
-                        "summary_generation": "pending",
-                        "generate_pdf": "pending",
-                        "complete": "pending"
-                    }
-                    })
-                    # #region agent log
-                    try:
-                        with open(log_path, "a", encoding="utf-8") as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"JOB_STATUS_UPDATE","location":"main.py:2488","message":"Job status update successful","data":{"job_id":job_id},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-                    except: pass
-                    # #endregion
-                    logger.info("Job status updated successfully", job_id=job_id)
-                except Exception as e:
-                    # #region agent log
-                    try:
-                        with open(log_path, "a", encoding="utf-8") as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"JOB_STATUS_UPDATE","location":"main.py:2490","message":"Job status update failed","data":{"job_id":job_id,"error":str(e),"error_type":type(e).__name__},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-                    except: pass
-                    # #endregion
-                    logger.error("Failed to update job status", job_id=job_id, error=str(e), exc_info=True)
-                    raise
-                
-                # Initialize processing service
-                # #region agent log
-                import json
-                log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"SERVICE_INIT","location":"main.py:2491","message":"Initializing VideoProcessingService","data":{"job_id":job_id},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-                except: pass
-                # #endregion
-                processing_service = VideoProcessingService()
-                # #region agent log
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"SERVICE_INIT","location":"main.py:2493","message":"VideoProcessingService initialized","data":{"job_id":job_id},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-                except: pass
-                # #endregion
-                logger.info("Video processing service initialized", job_id=job_id)
-                
-                # Convert upload_id to UUID if provided
-                video_uuid = None
-                if upload_id:
-                    from uuid import UUID
-                    try:
-                        video_uuid = UUID(upload_id)
-                        logger.info("Converted upload_id to UUID", upload_id=upload_id, video_uuid=str(video_uuid))
-                    except ValueError as e:
-                        logger.error("Invalid upload_id format", upload_id=upload_id, error=str(e))
-                        raise ValueError(f"Invalid upload_id format: {upload_id}")
-                
-                if not video_uuid:
-                    raise ValueError("Video upload ID is required for processing")
-                
-                # Run complete processing pipeline
-                # #region agent log
-                import json
-                log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"PROCESSING_START","location":"main.py:2573","message":"Starting process_video_complete","data":{"job_id":job_id,"video_id":str(video_uuid),"file_path":file_path},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-                except: pass
-                # #endregion
-                processing_result = await processing_service.process_video_complete(
-                    video_path=file_path,
-                    video_id=video_uuid,
-                    job_id=job_id,
-                    frames_dir=FRAMES_DIR,
-                    audio_dir=AUDIO_DIR,
-                    db=db
-                )
-                
-                # Update video upload status to completed
-                # #region agent log
-                import json
-                import time
-                log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"BEFORE_STATUS_UPDATE","location":"main.py:2658","message":"Before updating video upload status to completed","data":{"job_id":job_id,"upload_id":upload_id,"video_id":str(video_uuid)},"timestamp":int(time.time()*1000)}) + "\n")
-                except: pass
-                # #endregion
-                
-                try:
-                    # Ensure we have a fresh database session for this update to avoid connection busy errors
-                    await db.commit()  # Commit any pending changes first
-                    
-                    # #region agent log
-                    try:
-                        with open(log_path, "a", encoding="utf-8") as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"CALLING_UPDATE_STATUS","location":"main.py:2663","message":"Calling update_upload_status","data":{"job_id":job_id,"upload_id":upload_id,"video_id":str(video_uuid),"target_status":"completed"},"timestamp":int(time.time()*1000)}) + "\n")
-                    except: pass
-                    # #endregion
-                    
-                    updated_upload = await VideoUploadService.update_upload_status(db, video_uuid, "completed", job_id)
-                    if updated_upload:
-                        # #region agent log
-                        try:
-                            with open(log_path, "a", encoding="utf-8") as f:
-                                f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"STATUS_UPDATE_SUCCESS","location":"main.py:2665","message":"Video upload status updated successfully","data":{"job_id":job_id,"upload_id":upload_id,"video_id":str(video_uuid),"status":updated_upload.status,"video_file_number":updated_upload.video_file_number if hasattr(updated_upload, 'video_file_number') else None},"timestamp":int(time.time()*1000)}) + "\n")
-                        except: pass
-                        # #endregion
-                        logger.info("Video upload status updated to completed", 
-                                   upload_id=str(upload_id),
-                                   video_id=str(video_uuid),
-                                   status=updated_upload.status)
-                        # Invalidate cache for this video and user's video panel
-                        if user_id:
-                            CacheService.invalidate_video_cache(
-                                video_id=video_uuid, 
-                                video_file_number=updated_upload.video_file_number if hasattr(updated_upload, 'video_file_number') else None
-                            )
-                            CacheService.invalidate_user_cache(user_id)
-                    else:
-                        # #region agent log
-                        try:
-                            with open(log_path, "a", encoding="utf-8") as f:
-                                f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"STATUS_UPDATE_NOT_FOUND","location":"main.py:2677","message":"Video upload not found when updating status","data":{"job_id":job_id,"upload_id":upload_id,"video_id":str(video_uuid)},"timestamp":int(time.time()*1000)}) + "\n")
-                        except: pass
-                        # #endregion
-                        logger.warning("Video upload not found when updating status", 
-                                      upload_id=str(upload_id),
-                                      video_id=str(video_uuid))
-                        # Try to update directly if the service method didn't work
-                        from sqlalchemy import update
-                        from app.database import VideoUpload
-                        # Flush before update for SQL Server
-                        await db.flush()
-                        update_result = await db.execute(
-                            update(VideoUpload)
-                            .where(VideoUpload.id == video_uuid)
-                            .values(status="completed")
-                        )
-                        await db.flush()
-                        await db.commit()
-                        # #region agent log
-                        try:
-                            with open(log_path, "a", encoding="utf-8") as f:
-                                f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"STATUS_UPDATE_DIRECT","location":"main.py:2692","message":"Video upload status updated directly","data":{"job_id":job_id,"upload_id":upload_id,"video_id":str(video_uuid),"rows_affected":update_result.rowcount},"timestamp":int(time.time()*1000)}) + "\n")
-                        except: pass
-                        # #endregion
-                        logger.info("Video upload status updated directly to completed", 
-                                   upload_id=str(upload_id),
-                                   video_id=str(video_uuid),
-                                   rows_affected=update_result.rowcount)
-                except Exception as e:
-                    # #region agent log
-                    try:
-                        with open(log_path, "a", encoding="utf-8") as f:
-                            f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"STATUS_UPDATE_ERROR","location":"main.py:2696","message":"Failed to update video upload status","data":{"job_id":job_id,"upload_id":upload_id,"video_id":str(video_uuid),"error":str(e),"error_type":type(e).__name__},"timestamp":int(time.time()*1000)}) + "\n")
-                    except: pass
-                    # #endregion
-                    logger.error("Failed to update video upload status", 
-                               upload_id=upload_id, 
-                               video_id=str(video_uuid),
-                               error=str(e),
-                               exc_info=True)
-                    # Try to update directly as fallback
-                    try:
-                        from sqlalchemy import update
-                        from app.database import VideoUpload
-                        # Ensure we flush before update for SQL Server
-                        await db.flush()
-                        fallback_result = await db.execute(
-                            update(VideoUpload)
-                            .where(VideoUpload.id == video_uuid)
-                            .values(status="completed")
-                        )
-                        await db.commit()
-                        # #region agent log
-                        try:
-                            with open(log_path, "a", encoding="utf-8") as f:
-                                f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"STATUS_UPDATE_FALLBACK","location":"main.py:2714","message":"Video upload status updated via fallback","data":{"job_id":job_id,"upload_id":upload_id,"video_id":str(video_uuid),"rows_affected":fallback_result.rowcount},"timestamp":int(time.time()*1000)}) + "\n")
-                        except: pass
-                        # #endregion
-                        logger.info("Video upload status updated via fallback method", 
-                                   upload_id=str(upload_id),
-                                   video_id=str(video_uuid),
-                                   rows_affected=fallback_result.rowcount)
-                    except Exception as fallback_error:
-                        # #region agent log
-                        try:
-                            with open(log_path, "a", encoding="utf-8") as f:
-                                f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"STATUS_UPDATE_FALLBACK_ERROR","location":"main.py:2718","message":"Fallback status update also failed","data":{"job_id":job_id,"upload_id":upload_id,"video_id":str(video_uuid),"error":str(fallback_error),"error_type":type(fallback_error).__name__},"timestamp":int(time.time()*1000)}) + "\n")
-                        except: pass
-                        # #endregion
-                        logger.error("Fallback status update also failed", 
-                                   upload_id=str(upload_id),
-                                   video_id=str(video_uuid),
-                                   error=str(fallback_error))
-                
-                logger.info("Video processing completed successfully", 
-                           job_id=job_id, 
-                           upload_id=upload_id,
-                           transcript_length=len(processing_result.get("transcript", "")),
-                           frames_analyzed=processing_result.get("frame_analyses_count", 0))
-                
-            except Exception as e:
-                # #region agent log
-                import json
-                import traceback
-                log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"PROCESSING_ERROR","location":"main.py:2667","message":"Video processing failed","data":{"job_id":job_id,"upload_id":upload_id,"error":str(e),"error_type":type(e).__name__,"traceback":traceback.format_exc()},"timestamp":int(__import__("time").time()*1000)}) + "\n")
-                except: pass
-                # #endregion
-                logger.error("Video processing failed", 
-                            job_id=job_id, 
-                            upload_id=upload_id,
-                            error=str(e), 
-                            exc_info=True)
-                
-                # Update job status
-                try:
-                    await JobService.update_job(db, job_id, {
-                        "status": "failed",
-                        "message": f"Processing failed: {str(e)}",
-                        "current_step": "failed",
-                        "error": str(e)
-                    })
-                except Exception as update_error:
-                    logger.error("Failed to update job status", 
-                               job_id=job_id, 
-                               error=str(update_error))
-                
-                # Update video upload status if upload_id provided
-                if upload_id:
-                    try:
-                        from uuid import UUID
-                        await VideoUploadService.update_upload_status(
-                            db, 
-                            UUID(upload_id), 
-                            "failed",
-                            error=str(e)
-                        )
-                    except Exception as upload_error:
-                        logger.error("Failed to update video upload status", 
-                                   upload_id=upload_id, 
-                                   error=str(upload_error))
-    except Exception as top_level_error:
-        # Catch any errors that weren't caught by inner try-except blocks
-        # #region agent log
-        import json
-        import time
-        import traceback
-        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"processing-debug","hypothesisId":"TASK_TOP_LEVEL_ERROR","location":"main.py:2773","message":"Top-level error in background task","data":{"job_id":job_id,"upload_id":upload_id,"error":str(top_level_error),"error_type":type(top_level_error).__name__,"traceback":traceback.format_exc()},"timestamp":int(time.time()*1000)}) + "\n")
-        except: pass
-        # #endregion
-        logger.error("Top-level error in video processing task", 
-                    job_id=job_id, 
-                    upload_id=upload_id,
-                    error=str(top_level_error), 
-                    exc_info=True)
 
 
 if __name__ == "__main__":

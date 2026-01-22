@@ -4,10 +4,14 @@ import { RETRY_CONFIG } from './config';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9001';
 
+// Global request limiter to prevent too many concurrent requests
+let activeRequestCount = 0;
+const MAX_CONCURRENT_REQUESTS = 5; // Maximum concurrent requests allowed
+
 // Create axios instance with default config
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // 30 seconds
+  timeout: 10000, // 10 seconds - reduced to prevent request buildup
   headers: {
     'Content-Type': 'application/json',
   },
@@ -26,6 +30,15 @@ const apiClient = axios.create({
 // Request interceptor
 apiClient.interceptors.request.use(
   (config) => {
+    // Limit concurrent requests to prevent browser overload
+    if (activeRequestCount >= MAX_CONCURRENT_REQUESTS) {
+      const error = new Error('Too many concurrent requests');
+      error.code = 'TOO_MANY_REQUESTS';
+      return Promise.reject(error);
+    }
+    
+    activeRequestCount++;
+    
     // Add auth token to requests if available
     const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
     if (token) {
@@ -41,6 +54,9 @@ apiClient.interceptors.request.use(
 // Response interceptor with retry logic
 apiClient.interceptors.response.use(
   (response) => {
+    // Decrement active request count on success
+    activeRequestCount = Math.max(0, activeRequestCount - 1);
+    
     // Extract and store request ID from response headers
     const requestId = response.headers['x-request-id'];
     if (requestId && typeof window !== 'undefined') {
@@ -55,6 +71,9 @@ apiClient.interceptors.response.use(
     return response;
   },
   async (error) => {
+    // Decrement active request count on error (always decrement, even if retrying)
+    activeRequestCount = Math.max(0, activeRequestCount - 1);
+    
     // Extract request ID from error response if available
     if (error.response?.headers) {
       const requestId = error.response.headers['x-request-id'];
@@ -83,48 +102,55 @@ apiClient.interceptors.response.use(
     }
 
     // Enhanced retry logic with exponential backoff
+    // Check if request has already been retried to prevent infinite loops
+    const currentRetryCount = originalRequest._retryCount || 0;
+    
+    // Don't retry panel requests if they're timing out - prevents request queue buildup
+    const isPanelRequest = originalRequest.url && originalRequest.url.includes('/api/videos/panel');
+    
     const shouldRetry = (
-      !originalRequest._retryCount &&
+      currentRetryCount < RETRY_CONFIG.maxRetries &&
       originalRequest.url !== '/api/upload' &&
+      !isPanelRequest && // Don't retry panel requests - they're called frequently enough
       (
-        // Network errors
-        (!error.response && RETRY_CONFIG.retryableErrors.includes(error.code || error.message)) ||
+        // Network errors (but not timeout errors for panel requests)
+        (!error.response && RETRY_CONFIG.retryableErrors.includes(error.code || error.message) && 
+         !(isPanelRequest && (error.code === 'ECONNABORTED' || error.message === 'timeout'))) ||
         // Retryable status codes
         (error.response && RETRY_CONFIG.retryableStatuses.includes(error.response.status))
       )
     );
 
     if (shouldRetry) {
-      const retryCount = (originalRequest._retryCount || 0) + 1;
+      const retryCount = currentRetryCount + 1;
       
-      if (retryCount <= RETRY_CONFIG.maxRetries) {
-        originalRequest._retryCount = retryCount;
-        
-        // Calculate delay with exponential backoff
-        let delay = RETRY_CONFIG.initialDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, retryCount - 1);
-        delay = Math.min(delay, RETRY_CONFIG.maxDelay);
-        
-        // For 429 rate limit, use retry-after header if available
-        if (error.response?.status === 429) {
-          const retryAfter = error.response.headers['retry-after'];
-          if (retryAfter) {
-            delay = parseInt(retryAfter) * 1000;
-          }
+      // Set retry count BEFORE making the retry to prevent duplicate retries
+      originalRequest._retryCount = retryCount;
+      
+      // Calculate delay with exponential backoff
+      let delay = RETRY_CONFIG.initialDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, retryCount - 1);
+      delay = Math.min(delay, RETRY_CONFIG.maxDelay);
+      
+      // For 429 rate limit, use retry-after header if available
+      if (error.response?.status === 429) {
+        const retryAfter = error.response.headers['retry-after'];
+        if (retryAfter) {
+          delay = parseInt(retryAfter) * 1000;
         }
-        
-        // Log retry attempt
-        console.log(`Retrying request (attempt ${retryCount}/${RETRY_CONFIG.maxRetries}): ${originalRequest.url} after ${delay}ms`);
-        
-        // Wait before retry
-        await new Promise(resolve => setTimeout(resolve, delay));
-        
-        return apiClient(originalRequest);
-      } else {
-        // Max retries exceeded
-        console.error(`Max retries (${RETRY_CONFIG.maxRetries}) exceeded for: ${originalRequest.url}`);
-        error.maxRetriesExceeded = true;
-        error.retryCount = retryCount - 1;
       }
+      
+      // Log retry attempt
+      console.log(`Retrying request (attempt ${retryCount}/${RETRY_CONFIG.maxRetries}): ${originalRequest.url} after ${delay}ms`);
+      
+      // Wait before retry
+      await new Promise(resolve => setTimeout(resolve, delay));
+      
+      return apiClient(originalRequest);
+    } else if (currentRetryCount >= RETRY_CONFIG.maxRetries) {
+      // Max retries exceeded
+      console.error(`Max retries (${RETRY_CONFIG.maxRetries}) exceeded for: ${originalRequest.url}`);
+      error.maxRetriesExceeded = true;
+      error.retryCount = currentRetryCount;
     }
 
     // Handle specific error cases
@@ -321,7 +347,7 @@ export const getJobStatus = async (jobId) => {
   return response.data;
 };
 
-export const getVideosPanel = async (params = {}) => {
+export const getVideosPanel = async (params = {}, signal = null) => {
   const {
     page = 1,
     page_size = 20,
@@ -346,7 +372,8 @@ export const getVideosPanel = async (params = {}) => {
   if (priority) queryParams.append('priority', priority);
   if (tags) queryParams.append('tags', tags);
   
-  const response = await apiClient.get(`/api/videos/panel?${queryParams.toString()}`);
+  const config = signal ? { signal } : {};
+  const response = await apiClient.get(`/api/videos/panel?${queryParams.toString()}`, config);
   return response.data;
 };
 
@@ -356,6 +383,11 @@ export const getVideoFrames = async (videoId, limit = null, offset = 0) => {
   queryParams.append('offset', offset.toString());
   
   const response = await apiClient.get(`/api/videos/${videoId}/frames?${queryParams.toString()}`);
+  return response.data;
+};
+
+export const getVideoTranscript = async (videoId) => {
+  const response = await apiClient.get(`/api/videos/${videoId}/transcript`);
   return response.data;
 };
 
@@ -370,14 +402,58 @@ export const getVideoSummaries = async (videoId) => {
 };
 
 export const getDocument = async (videoFileNumber, includeImages = true) => {
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:372',message:'getDocument API call entry',data:{videoFileNumber,includeImages,url:`/api/videos/file-number/${videoFileNumber}/document`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+  // #endregion
   // By default, include images for display in document page
   // Set includeImages=false only when images are not needed (faster loading)
-  const response = await apiClient.get(`/api/videos/file-number/${videoFileNumber}/document`, {
-    params: {
-      include_images: includeImages
+  try {
+    const response = await apiClient.get(`/api/videos/file-number/${videoFileNumber}/document`, {
+      params: {
+        include_images: includeImages
+      }
+    });
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:380',message:'getDocument API call success',data:{status:response.status,hasData:!!response.data,dataKeys:response.data?Object.keys(response.data):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+    return response.data;
+  } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:383',message:'getDocument API call error',data:{errorMessage:error.message,status:error.response?.status,errorData:error.response?.data},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+    throw error;
+  }
+};
+
+export const getDocumentByVideoId = async (videoId, includeImages = true) => {
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:391',message:'getDocumentByVideoId API call entry',data:{videoId,includeImages,url:`/api/videos/${videoId}/document`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+  // #endregion
+  try {
+    const response = await apiClient.get(`/api/videos/${videoId}/document`, {
+      params: {
+        include_images: includeImages
+      }
+    });
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:398',message:'getDocumentByVideoId API call success',data:{status:response.status,hasData:!!response.data,dataKeys:response.data?Object.keys(response.data):[],hasDetail:!!response.data?.detail},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+    // If response has 'detail' field, it's likely an error response (even if status is 200)
+    if (response.data && response.data.detail) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:403',message:'getDocumentByVideoId response has detail (error)',data:{detail:response.data.detail,status:response.status},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      const error = new Error(response.data.detail);
+      error.response = { status: response.status || 404, data: response.data };
+      throw error;
     }
-  });
-  return response.data;
+    return response.data;
+  } catch (error) {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:411',message:'getDocumentByVideoId API call error',data:{errorMessage:error.message,status:error.response?.status,errorData:error.response?.data},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+    throw error;
+  }
 };
 
 // Activity Logs APIs

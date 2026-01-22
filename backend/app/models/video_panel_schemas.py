@@ -8,8 +8,9 @@ from uuid import UUID
 class VideoPanelItem(BaseModel):
     """Schema for a single video item in the panel"""
     id: UUID = Field(..., description="Video upload ID")
-    video_file_number: str = Field(..., description="Video file number (e.g., VF-2024-0001)")
-    name: str = Field(..., description="Video name")
+    video_file_number: Optional[str] = Field(None, description="Video file number (e.g., VF-2024-0001)")
+    name: str = Field(..., description="Video name (formatted)")
+    original_input: Optional[str] = Field(None, description="User-entered name (original input)")
     status: str = Field(..., description="Status: uploaded, processing, completed, failed, cancelled")
     created_at: datetime = Field(..., description="When video was created")
     updated_at: datetime = Field(..., description="Last update timestamp")

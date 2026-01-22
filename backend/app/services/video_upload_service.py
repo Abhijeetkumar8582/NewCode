@@ -7,6 +7,7 @@ from datetime import datetime
 from app.database import VideoUpload, FrameAnalysis
 from app.utils.logger import logger
 from app.services.video_file_number_service import VideoFileNumberService
+from app.services.s3_service import s3_service
 from app.config import settings
 
 
@@ -27,42 +28,107 @@ class VideoUploadService:
         language_code: Optional[str] = None,
         priority: Optional[str] = "normal"
     ) -> VideoUpload:
-        """Create a new video upload record with unique video file number"""
-        # Generate unique video file number
-        video_file_number = await VideoFileNumberService.generate_video_file_number(db)
+        """
+        Create a new video upload record with unique video file number.
+        Handles race conditions when multiple users upload simultaneously.
+        """
+        from sqlalchemy.exc import IntegrityError
+        import asyncio
         
-        upload = VideoUpload(
-            user_id=user_id,
-            name=name,
-            source_type=source_type,
-            video_url=video_url,
-            original_input=original_input,
-            status=status,
-            job_id=job_id,
-            video_file_number=video_file_number,
-            video_length_seconds=metadata.get("video_length_seconds") if metadata else None,
-            video_size_bytes=metadata.get("video_size_bytes") if metadata else None,
-            mime_type=metadata.get("mime_type") if metadata else None,
-            resolution_width=metadata.get("resolution_width") if metadata else None,
-            resolution_height=metadata.get("resolution_height") if metadata else None,
-            fps=metadata.get("fps") if metadata else None,
-            application_name=application_name,
-            tags=tags,  # JSONB will handle list conversion
-            language_code=language_code,
-            priority=priority or "normal",
-            is_deleted=False
-        )
+        max_retries = 5
+        retry_count = 0
         
-        db.add(upload)
-        await db.commit()
-        await db.refresh(upload)
+        while retry_count < max_retries:
+            try:
+                # Generate unique video file number
+                video_file_number = await VideoFileNumberService.generate_video_file_number(db)
+                
+                upload = VideoUpload(
+                    user_id=user_id,
+                    name=name,
+                    source_type=source_type,
+                    video_url=video_url,
+                    original_input=original_input,
+                    status=status,
+                    job_id=job_id,
+                    video_file_number=video_file_number,
+                    video_length_seconds=metadata.get("video_length_seconds") if metadata else None,
+                    video_size_bytes=metadata.get("video_size_bytes") if metadata else None,
+                    mime_type=metadata.get("mime_type") if metadata else None,
+                    resolution_width=metadata.get("resolution_width") if metadata else None,
+                    resolution_height=metadata.get("resolution_height") if metadata else None,
+                    fps=metadata.get("fps") if metadata else None,
+                    application_name=application_name,
+                    tags=tags,  # JSONB will handle list conversion
+                    language_code=language_code,
+                    priority=priority or "normal",
+                    is_deleted=False
+                )
+                
+                db.add(upload)
+                await db.commit()
+                await db.refresh(upload)
+                
+                logger.info("Video upload created", 
+                           upload_id=str(upload.id), 
+                           video_file_number=video_file_number,
+                           user_id=str(user_id), 
+                           name=name)
+                return upload
+                
+            except IntegrityError as e:
+                # Check if it's a unique constraint violation on video_file_number
+                error_str = str(e.orig) if hasattr(e, 'orig') else str(e)
+                is_unique_violation = (
+                    "unique constraint" in error_str.lower() or
+                    "duplicate key" in error_str.lower() or
+                    "UNIQUE constraint" in error_str.upper() or
+                    "video_file_number" in error_str.lower()
+                )
+                
+                if is_unique_violation and retry_count < max_retries - 1:
+                    retry_count += 1
+                    await db.rollback()
+                    # Small random delay to reduce collision probability
+                    await asyncio.sleep(0.1 * retry_count)
+                    logger.warning(f"Video file number collision detected, retrying (attempt {retry_count}/{max_retries})",
+                                 user_id=str(user_id),
+                                 video_file_number=video_file_number,
+                                 error=error_str)
+                    continue
+                else:
+                    # Max retries reached or not a unique constraint violation
+                    await db.rollback()
+                    # Log to debug.log directly to avoid format string issues
+                    try:
+                        with open(debug_log_path, "a", encoding="utf-8") as f:
+                            f.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "video-upload-service",
+                                "hypothesisId": "CREATE_UPLOAD",
+                                "location": "video_upload_service.py:create_upload",
+                                "message": "Failed to create video upload after retries",
+                                "data": {
+                                    "user_id": str(user_id),
+                                    "retry_count": retry_count,
+                                    "error": error_str
+                                },
+                                "timestamp": int(datetime.now().timestamp() * 1000)
+                            }) + "\n")
+                    except Exception:
+                        pass
+                    raise
+            except Exception as e:
+                await db.rollback()
+                logger.error("Unexpected error creating video upload",
+                           user_id=str(user_id),
+                           retry_count=retry_count,
+                           error=str(e),
+                           exc_info=True)
+                raise
         
-        logger.info("Video upload created", 
-                   upload_id=str(upload.id), 
-                   video_file_number=video_file_number,
-                   user_id=str(user_id), 
-                   name=name)
-        return upload
+        # Should never reach here, but just in case
+        raise RuntimeError(f"Failed to create video upload after {max_retries} retries")
     
     @staticmethod
     async def get_upload(
@@ -71,13 +137,52 @@ class VideoUploadService:
         user_id: Optional[UUID] = None
     ) -> Optional[VideoUpload]:
         """Get video upload by ID, optionally filtered by user_id"""
-        query = select(VideoUpload).where(VideoUpload.id == upload_id)
+        # #region agent log
+        import json
+        import time
+        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"video_upload_service.py:139","message":"get_upload entry","data":{"upload_id":str(upload_id),"user_id":str(user_id) if user_id else None,"has_user_filter":user_id is not None},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        
+        # For MySQL/SQL Server, convert UUID to string for comparison if needed
+        from app.database import _is_mysql, _is_sql_server
+        if _is_mysql or _is_sql_server:
+            # Convert UUID to string for MySQL/SQL Server comparison
+            upload_id_for_query = str(upload_id)
+        else:
+            upload_id_for_query = upload_id
+        
+        query = select(VideoUpload).where(VideoUpload.id == upload_id_for_query)
         
         if user_id:
-            query = query.where(VideoUpload.user_id == user_id)
+            # For MySQL/SQL Server, ensure UUID comparison works correctly
+            if _is_mysql or _is_sql_server:
+                user_id_for_query = str(user_id)
+            else:
+                user_id_for_query = user_id
+            query = query.where(VideoUpload.user_id == user_id_for_query)
+        
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"video_upload_service.py:161","message":"Executing query","data":{"upload_id":str(upload_id),"upload_id_for_query":str(upload_id_for_query) if isinstance(upload_id_for_query, str) else str(upload_id_for_query),"upload_id_type":type(upload_id_for_query).__name__,"user_id":str(user_id) if user_id else None,"user_id_for_query":str(user_id_for_query) if user_id else None,"query_has_user_filter":user_id is not None,"is_mysql":_is_mysql,"is_sql_server":_is_sql_server},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
         
         result = await db.execute(query)
-        return result.scalar_one_or_none()
+        video_upload = result.scalar_one_or_none()
+        
+        # #region agent log
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"video_upload_service.py:157","message":"get_upload result","data":{"upload_id":str(upload_id),"user_id":str(user_id) if user_id else None,"video_found":video_upload is not None,"video_user_id":str(video_upload.user_id) if video_upload else None,"video_status":video_upload.status if video_upload else None,"video_is_deleted":video_upload.is_deleted if video_upload else None,"matching_user_id":str(video_upload.user_id)==str(user_id) if video_upload and user_id else None},"timestamp":int(time.time()*1000)}) + "\n")
+        except: pass
+        # #endregion
+        
+        return video_upload
     
     @staticmethod
     async def get_user_uploads(
@@ -193,13 +298,14 @@ class VideoUploadService:
             for tag in tags:
                 query = query.where(VideoUpload.tags.contains([tag]))
         
-        # Get total count
+        # Get total count - optimize by reusing the same query structure
         # For SQL Server, ensure we flush any pending operations before count query
         from app.database import _is_sql_server
         if _is_sql_server:
             await db.flush()
         
-        count_query = select(func.count()).select_from(VideoUpload).where(VideoUpload.user_id == user_id)
+        # Build count query by cloning the main query structure
+        count_query = select(func.count(VideoUpload.id)).where(VideoUpload.user_id == user_id)
         if not include_deleted:
             count_query = count_query.where(VideoUpload.is_deleted == False)
         if status:
@@ -214,8 +320,13 @@ class VideoUploadService:
             for tag in tags:
                 count_query = count_query.where(VideoUpload.tags.contains([tag]))
         
-        total_result = await db.execute(count_query)
-        total = total_result.scalar_one()
+        # Execute count query with timeout protection
+        try:
+            total_result = await db.execute(count_query)
+            total = total_result.scalar_one() or 0
+        except Exception as e:
+            logger.error(f"Error getting video count: {e}", exc_info=True)
+            total = 0
         
         # For SQL Server, ensure count result is fully consumed before next query
         if _is_sql_server:
@@ -248,40 +359,40 @@ class VideoUploadService:
         if _is_sql_server:
             await db.flush()
         
-        # Get frame stats for each upload
+        # Get frame stats for each upload - optimize with single query
         video_ids = [upload.id for upload in uploads]
+        frame_stats = {}
         
         if video_ids:
-            # Query frame counts per video
-            # Use CASE statement for SQL Server/MySQL compatibility instead of .filter()
-            db_url_lower = settings.DATABASE_URL.lower()
-            is_sql_server = "mssql" in db_url_lower
-            is_mysql = "mysql" in db_url_lower
-            
-            if is_sql_server or is_mysql:
-                # SQL Server/MySQL compatible query using CASE
-                frame_stats_query = select(
-                    FrameAnalysis.video_id,
-                    func.count(FrameAnalysis.id).label('total_frames'),
-                    func.sum(
-                        case((FrameAnalysis.gpt_response.isnot(None), 1), else_=0)
-                    ).label('frames_with_gpt')
-                ).where(
-                    FrameAnalysis.video_id.in_(video_ids)
-                ).group_by(FrameAnalysis.video_id)
-            else:
-                # PostgreSQL/SQLite compatible query
-                frame_stats_query = select(
-                    FrameAnalysis.video_id,
-                    func.count(FrameAnalysis.id).label('total_frames'),
-                    func.count(FrameAnalysis.id).filter(
-                        FrameAnalysis.gpt_response.isnot(None)
-                    ).label('frames_with_gpt')
-                ).where(
-                    FrameAnalysis.video_id.in_(video_ids)
-                ).group_by(FrameAnalysis.video_id)
+            # Query frame counts per video - use single optimized query
+            # Use CASE statement for SQL Server compatibility instead of .filter()
+            is_sql_server = "mssql" in settings.DATABASE_URL.lower()
             
             try:
+                if is_sql_server:
+                    # SQL Server compatible query using CASE
+                    frame_stats_query = select(
+                        FrameAnalysis.video_id,
+                        func.count(FrameAnalysis.id).label('total_frames'),
+                        func.sum(
+                            case((FrameAnalysis.gpt_response.isnot(None), 1), else_=0)
+                        ).label('frames_with_gpt')
+                    ).where(
+                        FrameAnalysis.video_id.in_(video_ids)
+                    ).group_by(FrameAnalysis.video_id)
+                else:
+                    # PostgreSQL/SQLite compatible query
+                    frame_stats_query = select(
+                        FrameAnalysis.video_id,
+                        func.count(FrameAnalysis.id).label('total_frames'),
+                        func.count(FrameAnalysis.id).filter(
+                            FrameAnalysis.gpt_response.isnot(None)
+                        ).label('frames_with_gpt')
+                    ).where(
+                        FrameAnalysis.video_id.in_(video_ids)
+                    ).group_by(FrameAnalysis.video_id)
+                
+                # Execute with timeout protection
                 frame_stats_result = await db.execute(frame_stats_query)
                 # For SQL Server, ensure we fully consume the result
                 frame_stats_rows = frame_stats_result.all()
@@ -296,11 +407,11 @@ class VideoUploadService:
                 if _is_sql_server:
                     await db.flush()
             except Exception as e:
-                # If frame_analyses table doesn't exist, return empty stats
-                logger.warning(f"Could not fetch frame stats (table may not exist): {e}")
+                # If frame_analyses table doesn't exist or query fails, return empty stats
+                # Don't log as error - this is expected if table doesn't exist
+                if "doesn't exist" not in str(e).lower() and "table" not in str(e).lower():
+                    logger.warning(f"Could not fetch frame stats: {e}")
                 frame_stats = {}
-        else:
-            frame_stats = {}
         
         # Combine upload data with stats
         videos_with_stats = []
@@ -311,6 +422,7 @@ class VideoUploadService:
                 'id': upload.id,
                 'video_file_number': upload.video_file_number,
                 'name': upload.name,
+                'original_input': upload.original_input,  # User-entered name
                 'status': upload.status,
                 'created_at': upload.created_at,
                 'updated_at': upload.updated_at,
@@ -322,7 +434,9 @@ class VideoUploadService:
                 'language_code': upload.language_code,
                 'priority': upload.priority,
                 'total_frames': stats['total_frames'],
-                'frames_with_gpt': stats['frames_with_gpt']
+                'frames_with_gpt': stats['frames_with_gpt'],
+                'error': upload.error if hasattr(upload, 'error') else None,  # Include error message for failed videos
+                'video_url': upload.video_url  # Include video URL for processing
             }
             videos_with_stats.append(video_dict)
         
@@ -336,55 +450,18 @@ class VideoUploadService:
         user_id: Optional[UUID] = None
     ) -> Optional[VideoUpload]:
         """Update video upload"""
-        # #region agent log
-        import json
-        import time
-        log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"upload-service","hypothesisId":"UPDATE_UPLOAD_ENTRY","location":"video_upload_service.py:332","message":"update_upload called","data":{"upload_id":str(upload_id),"updates":updates,"user_id":str(user_id) if user_id else None},"timestamp":int(time.time()*1000)}) + "\n")
-        except: pass
-        # #endregion
-        
         upload = await VideoUploadService.get_upload(db, upload_id, user_id)
         
         if not upload:
-            # #region agent log
-            try:
-                with open(log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps({"sessionId":"debug-session","runId":"upload-service","hypothesisId":"UPDATE_UPLOAD_NOT_FOUND","location":"video_upload_service.py:340","message":"Upload not found","data":{"upload_id":str(upload_id)},"timestamp":int(time.time()*1000)}) + "\n")
-            except: pass
-            # #endregion
             return None
-        
-        # #region agent log
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"upload-service","hypothesisId":"UPDATE_UPLOAD_FOUND","location":"video_upload_service.py:343","message":"Upload found, current status","data":{"upload_id":str(upload_id),"current_status":upload.status},"timestamp":int(time.time()*1000)}) + "\n")
-        except: pass
-        # #endregion
         
         # Update fields
         for key, value in updates.items():
             if hasattr(upload, key):
                 setattr(upload, key, value)
         
-        # #region agent log
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"upload-service","hypothesisId":"UPDATE_UPLOAD_BEFORE_COMMIT","location":"video_upload_service.py:350","message":"Before commit, new status","data":{"upload_id":str(upload_id),"new_status":upload.status if hasattr(upload, 'status') else None},"timestamp":int(time.time()*1000)}) + "\n")
-        except: pass
-        # #endregion
-        
         await db.commit()
         await db.refresh(upload)
-        
-        # #region agent log
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"upload-service","hypothesisId":"UPDATE_UPLOAD_AFTER_COMMIT","location":"video_upload_service.py:352","message":"After commit and refresh, final status","data":{"upload_id":str(upload_id),"final_status":upload.status},"timestamp":int(time.time()*1000)}) + "\n")
-        except: pass
-        # #endregion
         
         # Log with more detail if status is failed
         if updates.get("status") == "failed":

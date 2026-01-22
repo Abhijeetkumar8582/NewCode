@@ -307,6 +307,24 @@ class VideoSummary(Base):
     video_upload = relationship("VideoUpload", back_populates="summaries")
 
 
+class VideoDocumentation(Base):
+    __tablename__ = "video_documentation"
+    
+    # Based on the database structure, the table has both id (primary key) and video_id (foreign key)
+    id = Column(UUIDType, primary_key=True, default=uuid_default)
+    video_id = Column(UUIDType, ForeignKey('video_uploads.id', ondelete='CASCADE'), nullable=False, index=True)
+    # For MySQL, documentation_data is LONGTEXT, so we use Text and parse JSON manually
+    # For other DBs, we can use JSONBType
+    documentation_data = Column(Text if _is_mysql else JSONBType, nullable=False)  # JSON array with image, description, step_number
+    sprite_sheet_base64 = Column(Text, nullable=True)  # Base64 encoded sprite sheet
+    num_images = Column(Integer, nullable=True)  # Number of images
+    created_at = Column(TimestampType, nullable=False, server_default=func.now())
+    updated_at = Column(TimestampType, nullable=False, server_default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    video_upload = relationship("VideoUpload", backref="documentation")
+
+
 class JobStatus(Base):
     __tablename__ = "job_status"
     
@@ -391,16 +409,50 @@ async def init_db():
             await conn.execute(text("SELECT 1"))
         logger.info("Database connection test successful")
         
-        # Then create tables if they don't exist
-        logger.info("Initializing database tables...")
-        async with engine.begin() as conn:
-            # Use checkfirst=True to avoid errors if tables already exist
-            # This will skip creation if tables already exist
-            await conn.run_sync(Base.metadata.create_all, checkfirst=True)
+        # Check if tables already exist to avoid unnecessary DESCRIBE queries
+        logger.info("Checking database tables...")
+        tables_exist = False
+        try:
+            async with engine.begin() as conn:
+                if _is_mysql:
+                    result = await conn.execute(text("""
+                        SELECT COUNT(*) 
+                        FROM information_schema.tables 
+                        WHERE table_schema = DATABASE() 
+                        AND table_name IN ('users', 'video_uploads')
+                    """))
+                    tables_exist = result.scalar() >= 2
+                elif _is_postgresql:
+                    result = await conn.execute(text("""
+                        SELECT COUNT(*) 
+                        FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name IN ('users', 'video_uploads')
+                    """))
+                    tables_exist = result.scalar() >= 2
+                elif _is_sql_server:
+                    result = await conn.execute(text("""
+                        SELECT COUNT(*) 
+                        FROM INFORMATION_SCHEMA.TABLES 
+                        WHERE TABLE_NAME IN ('users', 'video_uploads')
+                    """))
+                    tables_exist = result.scalar() >= 2
+        except Exception as e:
+            logger.warning("Could not check table existence, will create tables", error=str(e))
+            tables_exist = False
+        
+        # Only run create_all if tables don't exist (avoids DESCRIBE queries on every startup)
+        if not tables_exist:
+            logger.info("Creating database tables...")
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all, checkfirst=True)
+        else:
+            logger.info("Database tables already exist, skipping creation")
         
         # For MySQL, check if job_status table exists and has job_id column
-        # If table exists but column is missing, add it
-        if _is_mysql:
+        # Only check if we just created tables or if this is a first-time setup
+        # Skip this check on subsequent startups to avoid unnecessary queries
+        if _is_mysql and not tables_exist:
             try:
                 async with engine.begin() as conn:
                     # Check if job_status table exists
