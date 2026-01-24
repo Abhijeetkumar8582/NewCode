@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     # Note: GOOGLE_REDIRECT_URI must match EXACTLY what's configured in Google Cloud Console
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
-    GOOGLE_REDIRECT_URI: str = "http://localhost:3000/auth/google/callback"
+    GOOGLE_REDIRECT_URI: str = "http://localhost:9001/api/auth/google/callback"
     
     # Rate Limiting
     RATE_LIMIT_ENABLED: bool = True

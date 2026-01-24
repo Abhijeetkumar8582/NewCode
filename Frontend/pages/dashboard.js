@@ -240,10 +240,10 @@ export default function Dashboard() {
       type: 'donut',
       data: {
         main: 'Completed',
-        percentage: (videoStats.totalVideos || 0) > 0 
+        percentage: (videoStats.totalVideos || 0) > 0
           ? Math.round(((videoStats.completedVideos || 0) / (videoStats.totalVideos || 1)) * 100)
           : 0,
-        other: 100 - ((videoStats.totalVideos || 0) > 0 
+        other: 100 - ((videoStats.totalVideos || 0) > 0
           ? Math.round(((videoStats.completedVideos || 0) / (videoStats.totalVideos || 1)) * 100)
           : 0)
       }
@@ -259,24 +259,8 @@ export default function Dashboard() {
       title: 'Total Frames Analyzed',
       value: formatNumber(videoStats.totalFrames || 0),
       label: `${videoStats.frameAnalysisRate || 0}% with GPT`
-    },
-    {
-      id: 'top-application',
-      title: 'Top Application',
-      value: topApp ? (topApp[0] || 'N/A') : 'N/A',
-      percentage: topApp && (videoStats.totalVideos || 0) > 0
-        ? `${Math.round(((topApp[1] || 0) / (videoStats.totalVideos || 1)) * 100)}% of total`
-        : '0% of total'
-    },
-    {
-      id: 'top-language',
-      title: 'Top Language',
-      value: topLang ? (topLang[0] || 'N/A').toUpperCase() : 'N/A',
-      percentage: topLang && (videoStats.totalVideos || 0) > 0
-        ? `${Math.round(((topLang[1] || 0) / (videoStats.totalVideos || 1)) * 100)}% of total`
-        : '0% of total'
     }
-  ] : [], [videoStats, topApp, topLang, bestMonth]);
+  ] : [], [videoStats, bestMonth]);
 
   // Sample metrics data (keeping for structured data)
   const metrics = [

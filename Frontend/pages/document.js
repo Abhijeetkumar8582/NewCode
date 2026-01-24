@@ -1156,7 +1156,7 @@ export default function Document() {
                           </div>
                         ) : transcriptData && transcriptData.trim() ? (
                           <div className={styles.transcriptContent}>
-                            {(() => {
+                      {(() => {
                               // Parse transcript into chunks with timestamps
                               const lines = transcriptData.split('\n').filter(line => line.trim());
                               const chunks = [];
@@ -1192,8 +1192,8 @@ export default function Document() {
                                     chunks[chunks.length - 1].text.push(line);
                                   }
                                 }
-                              });
-                              
+                        });
+                        
                               // Add last chunk
                               if (currentChunk && currentChunk.text.length > 0) {
                                 chunks.push(currentChunk);
@@ -1221,18 +1221,18 @@ export default function Document() {
                                   <div className={styles.transcriptChunkText}>
                                     {chunk.text.map((textLine, lineIndex) => (
                                       <p key={lineIndex}>{textLine || '\u00A0'}</p>
-                                    ))}
-                                  </div>
-                                </div>
+                                ))}
+                              </div>
+                            </div>
                               ));
                             })()}
-                          </div>
+                              </div>
                         ) : (
                           <div className={styles.transcriptEmptyState}>
                             <div className={styles.transcriptEmptyIcon}>🎤</div>
                             <p className={styles.transcriptEmptyText}>video doesn&apos;t have any voice</p>
                             <p className={styles.transcriptEmptySubtext}>No transcript available for this video</p>
-                          </div>
+                            </div>
                         )}
                       </div>
                     </div>
@@ -1578,8 +1578,8 @@ export default function Document() {
                                   </td>
                                 </tr>
                               );
-                            }
-                            
+                                }
+                                
                             if (!framesData || framesData.length === 0) {
                               return (
                                 <tr>

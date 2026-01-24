@@ -257,14 +257,14 @@ class S3Service:
                             'video_id': str(video_id)
                         }
                     }
-                )
+                    )
                 # #region agent log
                 try:
                     with open(log_path, "a", encoding="utf-8") as f:
                         f.write(json.dumps({"sessionId": "debug-session", "runId": "s3-upload", "hypothesisId": "B,G", "location": "s3_service.py:246", "message": "After boto3 upload_file (no exception)", "data": {"s3_key": s3_key}, "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000)}) + "\n")
                 except: pass
                 # #endregion
-                
+
                 # Verify file exists in S3
                 try:
                     self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
@@ -460,6 +460,164 @@ class S3Service:
             logger.error("Unexpected error during S3 upload from stream",
                         error=str(e),
                         exc_info=True)
+            return None
+
+    def upload_file_multipart(
+        self,
+        file_obj,
+        user_id: str,
+        video_id: str,
+        original_filename: str,
+        file_size_bytes: int = 0
+    ) -> Optional[str]:
+        """
+        Upload large files using multipart upload for better performance
+
+        Args:
+            file_obj: Async file-like object (FastAPI UploadFile)
+            user_id: User's UUID as string
+            video_id: Video upload ID (UUID) as string
+            original_filename: Original filename (to extract extension)
+            file_size_bytes: File size in bytes (optional, for logging)
+
+        Returns:
+            S3 object key (path) if successful, None otherwise
+        """
+        if not self.s3_client or not self.bucket_name:
+            logger.warning("S3 not configured, cannot upload file", file=original_filename)
+            return None
+
+        try:
+            # Get current UTC time in format: YYYYMMDDHHMMSS
+            current_time = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+
+            # Get file extension from original filename
+            file_extension = Path(original_filename).suffix or '.mp4'
+
+            # Sanitize user_id and video_id (keep UUID format with hyphens, remove only invalid chars)
+            sanitized_user_id = re.sub(r'[^a-zA-Z0-9_-]', '', str(user_id))
+            sanitized_video_id = re.sub(r'[^a-zA-Z0-9_-]', '', str(video_id))
+
+            # Construct S3 key: user_id_VID_video_id_DATE_YYYYMMDDHHMMSS.{extension}
+            s3_key = f"{sanitized_user_id}_VID_{sanitized_video_id}_DATE_{current_time}{file_extension}"
+
+            file_size_mb = file_size_bytes / (1024 * 1024) if file_size_bytes > 0 else 0
+
+            logger.info("Starting multipart upload to S3",
+                       bucket=self.bucket_name,
+                       s3_key=s3_key,
+                       file_size_mb=round(file_size_mb, 2) if file_size_mb > 0 else "unknown")
+
+            # Create multipart upload
+            create_response = self.s3_client.create_multipart_upload(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                ContentType=self._get_content_type(original_filename),
+                Metadata={
+                    'original_filename': original_filename,
+                    'user_id': str(user_id),
+                    'video_id': str(video_id)
+                }
+            )
+            upload_id = create_response['UploadId']
+
+            # Upload in chunks
+            chunk_size = 8 * 1024 * 1024  # 8MB chunks (AWS recommended)
+            parts = []
+            part_number = 1
+
+            # Reset file pointer to beginning
+            if hasattr(file_obj, 'seek'):
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(file_obj.seek(0))
+                finally:
+                    loop.close()
+
+            while True:
+                # Read chunk from async file
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    chunk = loop.run_until_complete(file_obj.read(chunk_size))
+                    if not chunk:
+                        break
+
+                    # Upload this part
+                    response = self.s3_client.upload_part(
+                        Bucket=self.bucket_name,
+                        Key=s3_key,
+                        PartNumber=part_number,
+                        UploadId=upload_id,
+                        Body=chunk
+                    )
+
+                    parts.append({
+                        'ETag': response['ETag'],
+                        'PartNumber': part_number
+                    })
+
+                    part_number += 1
+                    logger.debug(f"Uploaded part {part_number-1} of multipart upload")
+
+                finally:
+                    loop.close()
+
+            # Complete multipart upload
+            self.s3_client.complete_multipart_upload(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                UploadId=upload_id,
+                MultipartUpload={'Parts': parts}
+            )
+
+            # Verify file exists in S3
+            try:
+                self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
+            except ClientError as verify_error:
+                logger.error("Multipart upload completed but verification failed - file not found in S3",
+                           s3_key=s3_key, bucket=self.bucket_name, error=str(verify_error))
+                return None
+
+            # Generate S3 URL
+            s3_url = f"s3://{self.bucket_name}/{s3_key}"
+
+            logger.info("Multipart upload completed successfully",
+                       s3_key=s3_key,
+                       s3_url=s3_url,
+                       file_size_mb=round(file_size_mb, 2) if file_size_mb > 0 else "unknown",
+                       parts_count=len(parts),
+                       bucket=self.bucket_name)
+
+            return s3_key
+
+        except ClientError as e:
+            logger.error("S3 multipart upload failed (ClientError)",
+                        error=str(e),
+                        error_code=e.response.get('Error', {}).get('Code', 'Unknown'),
+                        s3_key=s3_key if 's3_key' in locals() else None)
+            # Try to abort multipart upload if it exists
+            try:
+                if 'upload_id' in locals():
+                    self.s3_client.abort_multipart_upload(
+                        Bucket=self.bucket_name,
+                        Key=s3_key,
+                        UploadId=upload_id
+                    )
+            except Exception:
+                pass  # Ignore abort errors
+            return None
+        except BotoCoreError as e:
+            logger.error("S3 multipart upload failed (BotoCoreError)",
+                        error=str(e))
+            return None
+        except Exception as e:
+            logger.error("S3 multipart upload failed (unexpected error)",
+                        error=str(e),
+                        error_type=type(e).__name__)
             return None
     
     def _get_content_type(self, filename: str) -> str:

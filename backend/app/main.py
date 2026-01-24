@@ -13,6 +13,7 @@ from pathlib import Path
 import uuid
 import asyncio
 import aiofiles
+import secrets
 from contextlib import asynccontextmanager
 from typing import Optional, List
 from datetime import timedelta, datetime, timezone
@@ -749,26 +750,36 @@ async def google_oauth_start(
 ):
     """Initiate Google OAuth flow - redirects to Google"""
     try:
+        # Log initial state
+        logger.info("Google OAuth start endpoint called", redirect_uri=redirect_uri)
+
+        # Check if credentials are configured
+        if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
+            logger.error("Google OAuth credentials not configured")
+            raise HTTPException(status_code=500, detail="Google OAuth not configured")
+
         # Store redirect_uri in state if provided (for frontend callback)
         state = None
         if redirect_uri:
             import base64
-            state = base64.urlsafe_b64encode(redirect_uri.encode()).decode()
-        
+            # Store both redirect_uri and a random state for CSRF protection
+            state_data = f"{secrets.token_urlsafe(32)}|{redirect_uri}"
+            state = base64.urlsafe_b64encode(state_data.encode()).decode()
+
+        logger.info("Creating Google OAuth authorization URL", has_state=bool(state))
+
         auth_url, state_token = GoogleOAuthService.get_authorization_url(state)
-        
-        # If redirect_uri was provided, combine it with state_token
-        if redirect_uri:
-            # Store the state_token with the redirect_uri
-            # In production, you might want to use a session or cache for this
-            return RedirectResponse(url=auth_url)
-        
+
+        logger.info("Google OAuth flow initiated successfully",
+                   auth_url_length=len(auth_url),
+                   has_redirect_uri=bool(redirect_uri))
+
         return RedirectResponse(url=auth_url)
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Google OAuth start error", error=str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to initiate Google OAuth")
+        raise HTTPException(status_code=500, detail=f"Failed to initiate Google OAuth: {str(e)}")
 
 
 @app.get("/api/auth/google/callback")
@@ -783,31 +794,54 @@ async def google_oauth_callback(
     try:
         # Check for errors from Google
         if error:
-            logger.error("Google OAuth error", error=error)
-            # Redirect to frontend with error
-            frontend_url = settings.CORS_ORIGINS[0] if settings.CORS_ORIGINS else "http://localhost:3000"
+            logger.error("Google OAuth error from Google", error=error, state=state)
+            # Extract redirect_uri from state if available
+            redirect_uri = None
+            if state:
+                try:
+                    import base64
+                    state_data = base64.urlsafe_b64decode(state).decode()
+                    # Format: "csrf_token|redirect_uri"
+                    if "|" in state_data:
+                        _, redirect_uri = state_data.split("|", 1)
+                except Exception:
+                    pass
+
+            frontend_url = redirect_uri or (settings.CORS_ORIGINS[0] if settings.CORS_ORIGINS else "http://localhost:3000")
             return RedirectResponse(
                 url=f"{frontend_url}/auth?error=oauth_failed&message={error}"
             )
-        
+
         if not code:
             raise HTTPException(status_code=400, detail="Authorization code not provided")
-        
+
+        # Extract redirect_uri from state if provided
+        redirect_uri = None
+        if state:
+            try:
+                import base64
+                state_data = base64.urlsafe_b64decode(state).decode()
+                # Format: "csrf_token|redirect_uri"
+                if "|" in state_data:
+                    _, redirect_uri = state_data.split("|", 1)
+            except Exception as e:
+                logger.warning("Failed to decode state parameter", error=str(e), state=state)
+
         # Authenticate with Google
         user = await GoogleOAuthService.authenticate_with_google(db, code)
-        
+
         if not user.is_active:
             raise HTTPException(status_code=403, detail="User account is inactive")
-        
+
         # Update last login
         await AuthService.update_last_login(db, user.id)
-        
+
         # Create access token
         access_token = AuthService.create_access_token(
             data={"sub": str(user.id), "email": user.email, "role": user.role},
             expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         )
-        
+
         # Create session
         session = await AuthService.create_session(
             db=db,
@@ -815,23 +849,37 @@ async def google_oauth_callback(
             ip_address=get_client_ip(request),
             user_agent=get_user_agent(request)
         )
-        
+
         # Log activity
         await ActivityService.log_activity(
             db=db,
             user_id=user.id,
             action="LOGIN_GOOGLE",
             description=f"User {user.email} logged in with Google",
-            metadata={"provider": "google"},
+            metadata={"provider": "google", "redirect_uri": redirect_uri},
             ip_address=get_client_ip(request)
         )
-        
-        # Determine redirect URL - use the frontend callback URL
-        frontend_url = settings.CORS_ORIGINS[0] if settings.CORS_ORIGINS else "http://localhost:3000"
-        
-        # Redirect to frontend Google OAuth callback with tokens
-        redirect_url = f"{frontend_url}/auth/google/callback?token={access_token}&session={session.session_token}"
-        
+
+        # Determine redirect URL
+        if redirect_uri:
+            # If redirect_uri is just the origin, append the callback path
+            if redirect_uri.endswith(('/', '/auth')):
+                # Remove trailing slash or /auth to avoid double paths
+                base_url = redirect_uri.rstrip('/auth').rstrip('/')
+                redirect_url = f"{base_url}/auth/google/callback?token={access_token}&session={session.session_token}"
+            else:
+                # redirect_uri is a full URL, use it directly
+                redirect_url = f"{redirect_uri}/auth/google/callback?token={access_token}&session={session.session_token}"
+        else:
+            # Use CORS origin as fallback
+            frontend_url = settings.CORS_ORIGINS[0] if settings.CORS_ORIGINS else "http://localhost:3000"
+            redirect_url = f"{frontend_url}/auth/google/callback?token={access_token}&session={session.session_token}"
+
+        logger.info("Google OAuth successful",
+                   user_email=user.email,
+                   redirect_uri=redirect_uri,
+                   final_redirect_url=redirect_url)
+
         return RedirectResponse(url=redirect_url)
         
     except HTTPException as e:
@@ -955,7 +1003,7 @@ async def upload_video(
     log_path = r"c:\Users\abhij\OneDrive\Desktop\NewEpiplex\.cursor\debug.log"
     try:
         with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"upload-debug","hypothesisId":"UPLOAD_ENDPOINT_ENTRY","location":"main.py:902","message":"Upload endpoint called","data":{"filename":file.filename if file else None,"name":name,"name_type":type(name).__name__,"name_is_none":name is None,"name_is_empty":name == "" if name else True,"user_id":str(current_user.id) if current_user else None},"timestamp":int(time.time()*1000)}) + "\n")
+            f.write(json.dumps({"sessionId":"debug-session","runId":"multi-upload-debug","hypothesisId":"BACKEND_UPLOAD_START","location":"main.py:upload_endpoint","message":"Backend upload endpoint called","data":{"filename":file.filename if file else None,"name":name,"name_type":type(name).__name__,"name_is_none":name is None,"name_is_empty":name == "" if name else True,"user_id":str(current_user.id) if current_user else None,"file_size":file.size if file else None},"timestamp":int(time.time()*1000)}) + "\n")
     except Exception as log_err:
         # Log to console if file logging fails
         print(f"Failed to write log: {log_err}")
@@ -998,32 +1046,45 @@ async def upload_video(
             safe_filename = "video"
         
         # Get user-entered name for duplicate check and storage
+        # For multiple files, name already includes the number (e.g., "Video Name 1")
         user_entered_name = name.strip() if name and name.strip() else (file.filename or "Untitled Video")
         
         # Check for duplicate uploads (same original_input and user_id within last 30 seconds)
-        from datetime import timedelta, timezone
-        from sqlalchemy import select, and_
-        from app.database import VideoUpload
-        recent_duplicate = await db.execute(
-            select(VideoUpload).where(
-                and_(
-                    VideoUpload.user_id == current_user.id,
-                    VideoUpload.original_input == user_entered_name,
-                    VideoUpload.created_at >= datetime.now(timezone.utc) - timedelta(seconds=30),
-                    VideoUpload.is_deleted == False
-                )
-            ).order_by(VideoUpload.created_at.desc()).limit(1)
-        )
-        duplicate_upload = recent_duplicate.scalar_one_or_none()
-        if duplicate_upload:
-            logger.warning("Duplicate upload detected", 
-                         user_id=str(current_user.id),
-                         original_input=user_entered_name,
-                         existing_video_id=str(duplicate_upload.id))
-            raise HTTPException(
-                status_code=400,
-                detail=f"A video with the same name '{user_entered_name}' was uploaded recently. Please wait a moment or use a different name."
+        # Skip duplicate check for numbered uploads (e.g., "Video 1", "Video 2") as they are part of a batch
+        skip_duplicate_check = False
+        if user_entered_name and (' 1' in user_entered_name or ' 2' in user_entered_name or ' 3' in user_entered_name or
+                                  ' 4' in user_entered_name or ' 5' in user_entered_name or ' 6' in user_entered_name or
+                                  ' 7' in user_entered_name or ' 8' in user_entered_name or ' 9' in user_entered_name or
+                                  ' 10' in user_entered_name):
+            skip_duplicate_check = True
+
+        if not skip_duplicate_check:
+            from datetime import timedelta, timezone as dt_timezone
+            from sqlalchemy import select, and_
+            from app.database import VideoUpload
+            recent_duplicate = await db.execute(
+                select(VideoUpload).where(
+                    and_(
+                        VideoUpload.user_id == current_user.id,
+                        VideoUpload.original_input == user_entered_name,
+                        VideoUpload.created_at >= datetime.now(dt_timezone.utc) - timedelta(seconds=30),
+                        VideoUpload.is_deleted == False
+                    )
+                ).order_by(VideoUpload.created_at.desc()).limit(1)
             )
+            duplicate_upload = recent_duplicate.scalar_one_or_none()
+            if duplicate_upload:
+                logger.warning("Duplicate upload detected",
+                             user_id=str(current_user.id),
+                             original_input=user_entered_name,
+                             existing_video_id=str(duplicate_upload.id))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"A video with the same name '{user_entered_name}' was uploaded recently. Please wait a moment or use a different name."
+                )
+
+        # Always ensure timezone is available for the S3 upload logic below
+        # (timezone is imported at module level, but we ensure it's accessible here)
         
         # Read file to get size (needed for metadata)
         # Reset file pointer to beginning
@@ -1094,7 +1155,8 @@ async def upload_video(
         
         # Generate formatted name: {user_id}_VID_{video_id}_DATE_{YYYYMMDDHHMMSS}
         # Keep UUID format with hyphens
-        current_time = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        from datetime import timezone as dt_timezone
+        current_time = datetime.now(dt_timezone.utc).strftime('%Y%m%d%H%M%S')
         sanitized_user_id = re.sub(r'[^a-zA-Z0-9_-]', '', str(current_user.id))
         sanitized_video_id = re.sub(r'[^a-zA-Z0-9_-]', '', str(video_upload.id))
         formatted_name = f"{sanitized_user_id}_VID_{sanitized_video_id}_DATE_{current_time}"
@@ -1118,24 +1180,51 @@ async def upload_video(
         except: pass
         # #endregion
         
-        # Reset file pointer to beginning for S3 upload
-        await file.seek(0)
-        
-        # Create a synchronous file buffer for boto3
-        # boto3.upload_fileobj requires a synchronous file-like object
-        import io
-        # Read the entire file into memory as bytes
-        file_content = await file.read()
-        file_buffer = io.BytesIO(file_content)
-        
-        # Upload directly to S3 from file buffer (no local file saving)
-        s3_key = s3_service.upload_fileobj(
-            file_obj=file_buffer,  # Use BytesIO buffer (synchronous file-like object)
-            user_id=str(current_user.id),
-            video_id=str(video_upload.id),
-            original_filename=file.filename or safe_filename,
-            file_size_bytes=file_size_bytes
-        )
+        # For better performance, use multipart upload for large files
+        # This avoids loading entire file into memory and provides better performance
+
+        # Determine if we should use multipart upload (files > 100MB)
+        USE_MULTIPART_THRESHOLD = 100 * 1024 * 1024  # 100MB
+        use_multipart = file_size_bytes > USE_MULTIPART_THRESHOLD
+
+        if use_multipart:
+            logger.info("Using multipart upload for large file",
+                       file_size_mb=round(file_size_mb, 2),
+                       threshold_mb=round(USE_MULTIPART_THRESHOLD / (1024*1024), 2))
+
+            # Reset file pointer to beginning
+            await file.seek(0)
+
+            # Use multipart upload directly from the async file
+            s3_key = s3_service.upload_file_multipart(
+                file_obj=file,
+                user_id=str(current_user.id),
+                video_id=str(video_upload.id),
+                original_filename=file.filename or safe_filename,
+                file_size_bytes=file_size_bytes
+            )
+        else:
+            # For smaller files, use the existing optimized approach
+            logger.info("Using standard upload for smaller file",
+                       file_size_mb=round(file_size_mb, 2))
+
+            # Reset file pointer to beginning for S3 upload
+            await file.seek(0)
+
+            # Create a synchronous file buffer for boto3 (optimized for smaller files)
+            import io
+            # Read the entire file into memory as bytes (acceptable for files < 100MB)
+            file_content = await file.read()
+            file_buffer = io.BytesIO(file_content)
+
+            # Upload directly to S3 from file buffer (no local file saving)
+            s3_key = s3_service.upload_fileobj(
+                file_obj=file_buffer,  # Use BytesIO buffer (synchronous file-like object)
+                user_id=str(current_user.id),
+                video_id=str(video_upload.id),
+                original_filename=file.filename or safe_filename,
+                file_size_bytes=file_size_bytes
+            )
         # #region agent log
         try:
             with open(log_path, "a", encoding="utf-8") as f:

@@ -60,9 +60,15 @@ psql -U postgres -d epiplex -f migrations/003_add_oauth_support.sql
 
 ## Step 4: Install Dependencies
 
+The required dependencies are already included in `requirements.txt`:
+
 ```bash
 pip install -r requirements.txt
 ```
+
+Key dependencies for Google OAuth:
+- `httpx==0.25.2` - For making HTTP requests to Google APIs
+- `python-multipart` - For handling form data in requests
 
 ## API Endpoints
 
@@ -127,13 +133,13 @@ Alternative endpoint that returns JSON instead of redirecting. Useful for SPA ap
 
 ```javascript
 // Redirect user to Google OAuth
-window.location.href = 'http://localhost:9001/api/auth/google?redirect_uri=http://localhost:3000/auth/callback';
+window.location.href = 'http://localhost:9001/api/auth/google?redirect_uri=http://localhost:3000';
 ```
 
 Then handle the callback on your frontend:
 
 ```javascript
-// On /auth/callback page
+// On /auth/google/callback page
 const urlParams = new URLSearchParams(window.location.search);
 const token = urlParams.get('token');
 const session = urlParams.get('session');
@@ -142,7 +148,7 @@ if (token) {
   // Store tokens
   localStorage.setItem('access_token', token);
   localStorage.setItem('session_token', session);
-  
+
   // Redirect to dashboard
   window.location.href = '/dashboard';
 }
@@ -153,7 +159,7 @@ if (token) {
 ```javascript
 // Open Google OAuth in popup
 const popup = window.open(
-  'http://localhost:9001/api/auth/google?redirect_uri=http://localhost:3000/auth/callback',
+  'http://localhost:9001/api/auth/google?redirect_uri=http://localhost:3000',
   'google-auth',
   'width=500,height=600'
 );
@@ -168,6 +174,32 @@ window.addEventListener('message', (event) => {
     window.location.href = '/dashboard';
   }
 });
+```
+
+## Quick Setup (3 Steps)
+
+### 1. Configure Google Cloud Console
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create/select a project
+3. Enable Google+ API and Google OAuth2 API
+4. Go to **APIs & Services** > **Credentials**
+5. Click **Create Credentials** > **OAuth client ID**
+6. Configure OAuth consent screen (if prompted)
+7. Set application type to **Web application**
+8. Add authorized redirect URIs: `http://localhost:9001/api/auth/google/callback`
+
+### 2. Configure Environment Variables
+Add to your `.env` file:
+```env
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:9001/api/auth/google/callback
+```
+
+### 3. Run Database Migration
+```bash
+# Connect to your MySQL database and run:
+source backend/migrations/003_add_oauth_support.sql
 ```
 
 ## How It Works
@@ -197,18 +229,67 @@ window.addEventListener('message', (event) => {
 - The `state` parameter provides CSRF protection
 - Tokens are only sent in the redirect URL for development - consider using a more secure method in production (e.g., one-time token exchange)
 
+## Testing Google OAuth Setup
+
+### Test Environment Variables
+```bash
+cd backend
+python -c "
+from app.config import settings
+print('GOOGLE_CLIENT_ID:', bool(settings.GOOGLE_CLIENT_ID))
+print('GOOGLE_CLIENT_SECRET:', bool(settings.GOOGLE_CLIENT_SECRET))
+print('GOOGLE_REDIRECT_URI:', settings.GOOGLE_REDIRECT_URI)
+"
+```
+
+### Test OAuth Flow
+1. Run the configuration test: `python test_google_oauth.py`
+2. Start your backend server: `python start.py`
+3. Go to `http://localhost:3000/auth`
+4. Click "Continue with Google"
+5. Complete Google OAuth flow
+6. Check backend logs for successful authentication
+
+### Verify Database Records
+```sql
+-- Check OAuth users in database
+SELECT id, email, full_name, provider, google_id, created_at
+FROM users
+WHERE provider = 'google'
+ORDER BY created_at DESC;
+```
+
 ## Troubleshooting
 
 ### "Redirect URI mismatch" error
 - Ensure the redirect URI in your `.env` matches exactly what's configured in Google Cloud Console
 - Check for trailing slashes and protocol (http vs https)
+- For development: `http://localhost:9001/api/auth/google/callback`
+- For production: `https://yourdomain.com/api/auth/google/callback`
 
 ### "Invalid client" error
 - Verify `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are correct
 - Ensure credentials are for the correct project
+- Check that OAuth consent screen is configured
+
+### "access_denied" error
+- User denied consent or closed the popup
+- Check OAuth consent screen configuration
+- Ensure test users are added (if using external app type)
 
 ### User not created
-- Check database migration was run
+- Check database migration was run (`003_add_oauth_support.sql`)
 - Verify database connection
 - Check application logs for errors
+- Ensure Google user info includes email and id fields
+
+### Token exchange fails
+- Verify `GOOGLE_CLIENT_SECRET` is correct
+- Check that the authorization code is not expired (codes expire quickly)
+- Ensure redirect URI matches exactly
+
+### Frontend callback issues
+- Check browser console for JavaScript errors
+- Verify CORS settings allow your frontend domain
+- Check that tokens are being stored correctly in localStorage
 

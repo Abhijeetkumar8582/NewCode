@@ -1,0 +1,123 @@
+# Development overrides for docker-compose
+# This file is automatically loaded by docker-compose
+# Use this for development-specific configurations
+
+version: '3.8'
+
+services:
+  # Development database with persistent volume
+  db:
+    ports:
+      - "5432:5432"  # Expose PostgreSQL port for direct access
+    environment:
+      POSTGRES_DB: video_processing_dev
+      POSTGRES_USER: epiplex_dev
+      POSTGRES_PASSWORD: dev_password_123
+    volumes:
+      - dev_postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+
+  # Development Redis
+  redis:
+    ports:
+      - "6379:6379"  # Expose Redis port for development
+    volumes:
+      - dev_redis_data:/data
+
+  # Development backend with hot reload
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev  # Use development Dockerfile if available
+    environment:
+      DEBUG: true
+      LOG_LEVEL: DEBUG
+      # Override production settings for development
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173
+      DATABASE_URL: postgresql+asyncpg://epiplex_dev:dev_password_123@db:5432/video_processing_dev
+      # Use local file storage for development
+      UPLOAD_DIR: /app/uploads
+      AUDIO_DIR: /app/audio
+    volumes:
+      - ./backend:/app
+      - dev_uploads_data:/app/uploads
+      - dev_audio_data:/app/audio
+      - /app/__pycache__  # Exclude Python cache
+    ports:
+      - "9001:9001"  # Expose backend port
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9001", "--reload"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:9001/health', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Development frontend
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile.dev  # Use development Dockerfile if available
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:9001
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: 1
+      WATCHPACK_POLLING: true  # For file watching in containers
+    volumes:
+      - ./Frontend:/app
+      - /app/node_modules  # Don't override node_modules
+      - /app/.next  # Don't override Next.js build cache
+    ports:
+      - "3000:3000"  # Expose frontend port
+    command: ["npm", "run", "dev"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Development nginx (optional - can be disabled)
+  nginx:
+    profiles: ["with-nginx"]  # Only start with --profile with-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/dev.nginx.conf:/etc/nginx/nginx.conf:ro
+
+  # Development tools
+  pgadmin:
+    image: dpage/pgadmin4
+    profiles: ["dev-tools"]  # Only start with --profile dev-tools
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@epiplex.dev
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+    volumes:
+      - dev_pgadmin_data:/var/lib/pgadmin
+
+  redis-commander:
+    image: rediscommander/redis-commander
+    profiles: ["dev-tools"]  # Only start with --profile dev-tools
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+
+volumes:
+  dev_postgres_data:
+    driver: local
+  dev_redis_data:
+    driver: local
+  dev_uploads_data:
+    driver: local
+  dev_audio_data:
+    driver: local
+  dev_pgadmin_data:
+    driver: local

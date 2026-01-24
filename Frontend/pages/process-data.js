@@ -204,10 +204,10 @@ export default function ProcessData() {
       
       const response = await Promise.race([
         getVideosPanel({ 
-          page: page, 
-          page_size: pageSize,
-          sort_by: 'updated_at',
-          sort_order: 'desc',
+        page: page, 
+        page_size: pageSize,
+        sort_by: 'updated_at',
+        sort_order: 'desc',
           status: filterStatus || null,
           application_name: filterFileName || null
         }, activeRequestControllerRef.current?.signal).catch(err => {
@@ -366,7 +366,7 @@ export default function ProcessData() {
     } catch (error) {
       // Don't log cancellation errors
       if (error.message !== 'Request cancelled') {
-        console.error('Failed to fetch videos:', error);
+      console.error('Failed to fetch videos:', error);
       }
       // Only update on error if we don't have cached data
       if (!cachedData && error.message !== 'Request cancelled') {
@@ -642,7 +642,7 @@ export default function ProcessData() {
 
   const handleCancel = () => {
     setDialogOpen(false);
-    setFormData({ name: '', link: '', file: null, fileUrl: '' });
+    setFormData({ name: '', link: '', files: [], fileUrl: '' });
     setIsDragging(false);
     setUploadProgress(0);
     setIsUploading(false);
@@ -661,35 +661,72 @@ export default function ProcessData() {
   const handleDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      // Just store the file in state - don't upload yet
-      setFormData(prev => ({ ...prev, file, fileUrl: '' })); // Clear fileUrl when file is selected
+    const droppedFiles = Array.from(e.dataTransfer.files);
+
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:handleDrop',message:'Files dropped via drag and drop',data:{droppedFilesCount:droppedFiles.length,fileNames:droppedFiles.map(f=>f.name),fileSizes:droppedFiles.map(f=>f.size)},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_DRAG_DROP'})}).catch(()=>{});
+    // #endregion
+
+    if (droppedFiles.length > 0) {
+      // Just store the files in state - don't upload yet
+      setFormData(prev => {
+        const newFiles = [...(prev.files || []), ...droppedFiles];
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:handleDrop_update',message:'FormData updated with dropped files',data:{totalFilesInState:newFiles.length,fileNames:newFiles.map(f=>f.name)},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FORM_UPDATE'})}).catch(()=>{});
+        // #endregion
+
+        return {
+          ...prev,
+          files: newFiles,
+          fileUrl: '' // Clear fileUrl when files are selected
+        };
+      });
       setUploadProgress(0);
       setIsUploading(false);
     }
   };
 
   const handleFileSelect = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      // Just store the file in state - don't upload yet
-      setFormData(prev => ({ ...prev, file, fileUrl: '' })); // Clear fileUrl when file is selected
+    const selectedFiles = Array.from(e.target.files);
+
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:handleFileSelect',message:'Files selected via file input',data:{selectedFilesCount:selectedFiles.length,fileNames:selectedFiles.map(f=>f.name),fileSizes:selectedFiles.map(f=>f.size)},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FILE_SELECT'})}).catch(()=>{});
+    // #endregion
+
+    if (selectedFiles.length > 0) {
+      // Just store the files in state - don't upload yet
+      setFormData(prev => {
+        const newFiles = [...(prev.files || []), ...selectedFiles];
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:handleFileSelect_update',message:'FormData updated with selected files',data:{totalFilesInState:newFiles.length,fileNames:newFiles.map(f=>f.name)},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FORM_UPDATE'})}).catch(()=>{});
+        // #endregion
+
+        return {
+          ...prev,
+          files: newFiles,
+          fileUrl: '' // Clear fileUrl when files are selected
+        };
+      });
       setUploadProgress(0);
       setIsUploading(false);
+      // Clear the input value so the same files can be selected again if needed
+      e.target.value = '';
     }
   };
 
-  const handleRemoveFile = () => {
-    setFormData(prev => ({ ...prev, file: null }));
+  const handleRemoveFile = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      files: prev.files.filter((_, i) => i !== index)
+    }));
     setUploadProgress(0);
     setIsUploading(false);
   };
 
   const handleUrlInputChange = (e) => {
     const value = e.target.value;
-    // Clear file when URL is entered
-    setFormData(prev => ({ ...prev, fileUrl: value, file: null }));
+    // Clear files when URL is entered
+    setFormData(prev => ({ ...prev, fileUrl: value, files: [] }));
     setUploadProgress(0);
     setIsUploading(false);
   };
@@ -705,11 +742,16 @@ export default function ProcessData() {
     }
     
     // Get files to upload (support both single file and multiple files)
-    const filesToUpload = formData.files && formData.files.length > 0 
-      ? formData.files 
+    const filesToUpload = formData.files && formData.files.length > 0
+      ? formData.files
       : (formData.file ? [formData.file] : []);
+
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:files_to_upload',message:'Files to upload detected',data:{totalFiles:filesToUpload.length,hasFormDataFiles:formData.files && formData.files.length > 0,formDataFilesLength:formData.files ? formData.files.length : 0,hasFormDataFile:!!formData.file,fileNames:filesToUpload.map(f=>f.name),fileSizes:filesToUpload.map(f=>f.size)},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FILES_DETECTED'})}).catch(()=>{});
+    // #endregion
     
     if (!formData.link && filesToUpload.length === 0 && !formData.fileUrl) {
+      alert('Please select at least one file or provide a URL.');
       return;
     }
 
@@ -730,26 +772,23 @@ export default function ProcessData() {
         setTransferProgress(0);
         setDialogOpen(false);
         
-        // Upload all files sequentially
-        let lastEntryId = null;
-        let lastJobId = null;
-        
-        for (let i = 0; i < filesToUpload.length; i++) {
-          const file = filesToUpload[i];
-          const fileName = filesToUpload.length > 1 
-            ? `${formData.name || file.name} (${i + 1}/${filesToUpload.length})`
+        // Upload all files in parallel first
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:upload_parallel',message:'Starting parallel upload of multiple files',data:{totalFiles:filesToUpload.length,fileNames:filesToUpload.map(f=>f.name),userName:formData.name},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_START'})}).catch(()=>{});
+        // #endregion
+
+        const uploadPromises = filesToUpload.map(async (file, index) => {
+          const fileName = filesToUpload.length > 1
+            ? `${formData.name || 'Video'} ${index + 1}`
             : (formData.name || file.name);
-          
+
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:upload_file',message:'Starting upload for individual file',data:{fileIndex:index,fileName:fileName,originalFileName:file.name,fileSize:file.size},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FILE_START'})}).catch(()=>{});
+          // #endregion
+
           try {
-            // Update progress for current file
-            const fileProgress = (i / filesToUpload.length) * 100;
-            setTransferProgress(fileProgress);
-            
             const response = await uploadVideo(file, (progress) => {
-              // Calculate overall progress across all files
-              const overallProgress = fileProgress + (progress / filesToUpload.length);
-              setUploadProgress(overallProgress);
-              setTransferProgress(Math.min(90, overallProgress * 0.9));
+              // Individual file progress (not used for overall progress yet)
             }, {
               name: fileName,
               application_name: formData.application_name,
@@ -757,10 +796,11 @@ export default function ProcessData() {
               language_code: formData.language_code,
               priority: formData.priority || 'normal'
             });
-            
-            lastEntryId = response.data?.id || Date.now();
-            lastJobId = response.data?.job_id || null;
-            
+
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:upload_success',message:'File upload completed successfully',data:{fileIndex:index,fileName:fileName,responseId:response.data?.id,status:response.status},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FILE_SUCCESS'})}).catch(()=>{});
+            // #endregion
+
             // Log video upload (non-blocking)
             if (response.data && response.data.id) {
               try {
@@ -772,11 +812,28 @@ export default function ProcessData() {
                 console.warn('Failed to log video upload:', logError);
               }
             }
+
+            return { index, response, success: true };
           } catch (error) {
-            console.error(`Failed to upload file ${i + 1}:`, error);
-            // Continue with next file even if one fails
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:upload_error',message:'File upload failed',data:{fileIndex:index,fileName:fileName,error:error.message,errorCode:error.code},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FILE_ERROR'})}).catch(()=>{});
+            // #endregion
+
+            console.error(`Failed to upload file ${index + 1}:`, error);
+            return { index, error, success: false };
           }
-        }
+        });
+
+        // Wait for all uploads to complete
+        const uploadResults = await Promise.all(uploadPromises);
+
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:upload_complete',message:'All parallel uploads completed',data:{totalResults:uploadResults.length,successCount:uploadResults.filter(r=>r.success).length,errorCount:uploadResults.filter(r=>!r.success).length,results:uploadResults.map(r=>({index:r.index,success:r.success,hasResponse:!!r.response}))},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_COMPLETE'})}).catch(()=>{});
+        // #endregion
+
+        // Show transfer progress after all uploads complete
+        setTransferProgress(100);
+        setUploadProgress(100);
         
         // Complete transfer progress
         setTransferProgress(100);
@@ -786,16 +843,16 @@ export default function ProcessData() {
         setShowTransferDialog(false);
         
         // Clear form and reset state
-        setFormData({ name: '', link: '', file: null, files: [], fileUrl: '' });
-        setIsUploading(false);
-        setUploadProgress(0);
-        setTransferProgress(0);
-        setNameError(false);
-        
+          setFormData({ name: '', link: '', files: [], fileUrl: '' });
+          setIsUploading(false);
+          setUploadProgress(0);
+          setTransferProgress(0);
+          setNameError(false);
+          
         // Invalidate cache once
-        dataCache.clearByPattern('process-data:videos:');
-        dataCache.clearByPattern('document:videos:');
-        dataCache.clearByPattern('dashboard:');
+          dataCache.clearByPattern('process-data:videos:');
+          dataCache.clearByPattern('document:videos:');
+          dataCache.clearByPattern('dashboard:');
         
         // Single refresh to show uploaded videos (only once)
         await fetchVideos(currentPage, true); // Force refresh to show new uploads
@@ -1237,13 +1294,13 @@ export default function ProcessData() {
     if (!hasInitialFetchedRef.current) {
       return;
     }
-    
+
     // Clear any existing interval first
     if (statusCheckIntervalRef.current) {
       clearInterval(statusCheckIntervalRef.current);
       statusCheckIntervalRef.current = null;
     }
-    
+
     // Update the page ref to current page
     currentPageForIntervalRef.current = currentPage;
     
@@ -1254,13 +1311,13 @@ export default function ProcessData() {
 
     statusCheckIntervalRef.current = interval;
 
-    return () => {
+      return () => {
       // Cleanup on unmount or when dependencies change
       if (statusCheckIntervalRef.current) {
         clearInterval(statusCheckIntervalRef.current);
         statusCheckIntervalRef.current = null;
-      }
-    };
+        }
+      };
     // #region agent log
     fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:1289',message:'Status check effect dependencies changed',data:{currentPage,hasCheckStatusAndUpdate:!!checkStatusAndUpdate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
     // #endregion
@@ -2026,9 +2083,9 @@ export default function ProcessData() {
                         <line x1="12" y1="3" x2="12" y2="15"></line>
                       </svg>
                       <p className={styles.uploadText}>
-                        Drag & Drop or <button type="button" className={styles.uploadLink} onClick={() => document.getElementById('file-input').click()}>Choose file</button> to upload
+                        Drag & Drop or <button type="button" className={styles.uploadLink} onClick={() => document.getElementById('file-input').click()}>Choose files</button> to upload
                       </p>
-                      <p className={styles.uploadFormats}>Supported formats: MP4, AVI, MOV, MP3, WAV</p>
+                      <p className={styles.uploadFormats}>Supported formats: MP4, AVI, MOV, MP3, WAV (multiple files allowed)</p>
                       <input
                         type="file"
                         id="file-input"
@@ -2039,35 +2096,39 @@ export default function ProcessData() {
                       />
                     </div>
 
-                    {/* Uploaded File Status */}
-                    {formData.file && (
-                      <div className={styles.uploadedFile}>
-                        <div className={styles.uploadedFileIcon}>
-                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                            <polyline points="14 2 14 8 20 8"></polyline>
-                            <line x1="16" y1="13" x2="8" y2="13"></line>
-                            <line x1="16" y1="17" x2="8" y2="17"></line>
-                          </svg>
-                        </div>
-                        <div className={styles.uploadedFileInfo}>
-                          <div className={styles.uploadedFileName}>{formData.file.name}</div>
-                          <div className={styles.uploadedFileSize}>{(formData.file.size / (1024 * 1024)).toFixed(2)} MB</div>
-                          {isUploading && (
-                            <div className={styles.uploadProgress}>
-                              <div className={styles.uploadProgressBar}>
-                                <div className={styles.uploadProgressFill} style={{ width: `${uploadProgress}%` }}></div>
-                              </div>
-                              <span className={styles.uploadProgressText}>{uploadProgress}%</span>
+                    {/* Uploaded Files Status */}
+                    {formData.files && formData.files.length > 0 && (
+                      <div className={styles.uploadedFilesContainer}>
+                        {formData.files.map((file, index) => (
+                          <div key={index} className={styles.uploadedFile}>
+                            <div className={styles.uploadedFileIcon}>
+                              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                <polyline points="14 2 14 8 20 8"></polyline>
+                                <line x1="16" y1="13" x2="8" y2="13"></line>
+                                <line x1="16" y1="17" x2="8" y2="17"></line>
+                              </svg>
                             </div>
-                          )}
-                        </div>
-                        <button className={styles.uploadedFileRemove} onClick={handleRemoveFile} aria-label="Remove file">
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                          </svg>
-                        </button>
+                            <div className={styles.uploadedFileInfo}>
+                              <div className={styles.uploadedFileName}>{file.name}</div>
+                              <div className={styles.uploadedFileSize}>{(file.size / (1024 * 1024)).toFixed(2)} MB</div>
+                              {isUploading && (
+                                <div className={styles.uploadProgress}>
+                                  <div className={styles.uploadProgressBar}>
+                                    <div className={styles.uploadProgressFill} style={{ width: `${uploadProgress}%` }}></div>
+                                  </div>
+                                  <span className={styles.uploadProgressText}>{uploadProgress}%</span>
+                                </div>
+                              )}
+                            </div>
+                            <button className={styles.uploadedFileRemove} onClick={() => handleRemoveFile(index)} aria-label={`Remove ${file.name}`}>
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                              </svg>
+                            </button>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </>
@@ -2112,13 +2173,13 @@ export default function ProcessData() {
                   <button className={styles.cancelButton} onClick={handleCancel}>
                     Cancel
                   </button>
-                  <button 
-                    className={styles.startButton} 
+                  <button
+                    className={styles.startButton}
                     onClick={handleStart}
-                    disabled={isUploading || (uploadProgress > 0 && uploadProgress < 100) || !formData.file}
+                    disabled={isUploading || (uploadProgress > 0 && uploadProgress < 100) || (formData.files.length === 0 && !formData.fileUrl)}
                     style={{
-                      opacity: (isUploading || (uploadProgress > 0 && uploadProgress < 100) || !formData.file) ? 0.5 : 1,
-                      cursor: (isUploading || (uploadProgress > 0 && uploadProgress < 100) || !formData.file) ? 'not-allowed' : 'pointer'
+                      opacity: (isUploading || (uploadProgress > 0 && uploadProgress < 100) || (formData.files.length === 0 && !formData.fileUrl)) ? 0.5 : 1,
+                      cursor: (isUploading || (uploadProgress > 0 && uploadProgress < 100) || (formData.files.length === 0 && !formData.fileUrl)) ? 'not-allowed' : 'pointer'
                     }}
                   >
                     {isUploading && uploadProgress < 100 ? `Uploading... ${uploadProgress}%` : 'Save'}
@@ -2277,7 +2338,12 @@ export default function ProcessData() {
                       </svg>
                     </div>
                     <div className={styles.transferLabel}>Video File</div>
-                    <div className={styles.transferFileName}>{formData.file?.name || 'Video.mp4'}</div>
+                    <div className={styles.transferFileName}>
+                      {formData.files && formData.files.length > 0
+                        ? `${formData.files.length} file${formData.files.length > 1 ? 's' : ''} selected`
+                        : formData.file?.name || 'Video.mp4'
+                      }
+                    </div>
                   </div>
                 </div>
 

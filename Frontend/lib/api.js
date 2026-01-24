@@ -125,31 +125,31 @@ apiClient.interceptors.response.use(
       const retryCount = currentRetryCount + 1;
       
       // Set retry count BEFORE making the retry to prevent duplicate retries
-      originalRequest._retryCount = retryCount;
-      
-      // Calculate delay with exponential backoff
-      let delay = RETRY_CONFIG.initialDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, retryCount - 1);
-      delay = Math.min(delay, RETRY_CONFIG.maxDelay);
-      
-      // For 429 rate limit, use retry-after header if available
-      if (error.response?.status === 429) {
-        const retryAfter = error.response.headers['retry-after'];
-        if (retryAfter) {
-          delay = parseInt(retryAfter) * 1000;
+        originalRequest._retryCount = retryCount;
+        
+        // Calculate delay with exponential backoff
+        let delay = RETRY_CONFIG.initialDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, retryCount - 1);
+        delay = Math.min(delay, RETRY_CONFIG.maxDelay);
+        
+        // For 429 rate limit, use retry-after header if available
+        if (error.response?.status === 429) {
+          const retryAfter = error.response.headers['retry-after'];
+          if (retryAfter) {
+            delay = parseInt(retryAfter) * 1000;
+          }
         }
-      }
-      
-      // Log retry attempt
-      console.log(`Retrying request (attempt ${retryCount}/${RETRY_CONFIG.maxRetries}): ${originalRequest.url} after ${delay}ms`);
-      
-      // Wait before retry
-      await new Promise(resolve => setTimeout(resolve, delay));
-      
-      return apiClient(originalRequest);
+        
+        // Log retry attempt
+        console.log(`Retrying request (attempt ${retryCount}/${RETRY_CONFIG.maxRetries}): ${originalRequest.url} after ${delay}ms`);
+        
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+        return apiClient(originalRequest);
     } else if (currentRetryCount >= RETRY_CONFIG.maxRetries) {
-      // Max retries exceeded
-      console.error(`Max retries (${RETRY_CONFIG.maxRetries}) exceeded for: ${originalRequest.url}`);
-      error.maxRetriesExceeded = true;
+        // Max retries exceeded
+        console.error(`Max retries (${RETRY_CONFIG.maxRetries}) exceeded for: ${originalRequest.url}`);
+        error.maxRetriesExceeded = true;
       error.retryCount = currentRetryCount;
     }
 
@@ -408,11 +408,11 @@ export const getDocument = async (videoFileNumber, includeImages = true) => {
   // By default, include images for display in document page
   // Set includeImages=false only when images are not needed (faster loading)
   try {
-    const response = await apiClient.get(`/api/videos/file-number/${videoFileNumber}/document`, {
-      params: {
-        include_images: includeImages
-      }
-    });
+  const response = await apiClient.get(`/api/videos/file-number/${videoFileNumber}/document`, {
+    params: {
+      include_images: includeImages
+    }
+  });
     // #region agent log
     fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:380',message:'getDocument API call success',data:{status:response.status,hasData:!!response.data,dataKeys:response.data?Object.keys(response.data):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
     // #endregion
@@ -447,7 +447,7 @@ export const getDocumentByVideoId = async (videoId, includeImages = true) => {
       error.response = { status: response.status || 404, data: response.data };
       throw error;
     }
-    return response.data;
+  return response.data;
   } catch (error) {
     // #region agent log
     fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:411',message:'getDocumentByVideoId API call error',data:{errorMessage:error.message,status:error.response?.status,errorData:error.response?.data},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});

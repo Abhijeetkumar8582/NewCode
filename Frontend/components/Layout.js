@@ -48,7 +48,6 @@ export default function Layout({ children, pageTitle = 'Dashboard' }) {
     if (router.pathname === '/process-data') return 'Process Data';
     if (router.pathname === '/document') return 'Document';
     if (router.pathname === '/activity-log') return 'Activity Log';
-    if (router.pathname === '/settings') return 'Settings';
     if (router.pathname === '/help') return 'Help';
     return 'Dashboard';
   };
@@ -67,7 +66,6 @@ export default function Layout({ children, pageTitle = 'Dashboard' }) {
   ];
 
   const supportNavItems = [
-    { id: 'Settings', label: 'Settings', path: '/settings', icon: 'settings' },
     { id: 'Activity Log', label: 'Activity Log', path: '/activity-log', icon: 'activity' },
     { id: 'Help', label: 'Help & Support', path: '/help', icon: 'help' }
   ];
@@ -94,13 +92,6 @@ export default function Layout({ children, pageTitle = 'Dashboard' }) {
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
             <polyline points="14 2 14 8 20 8"></polyline>
-          </svg>
-        );
-      case 'settings':
-        return (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"></path>
           </svg>
         );
       case 'help':

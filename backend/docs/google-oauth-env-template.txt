@@ -1,0 +1,15 @@
+# Google OAuth2 Configuration Template
+# Copy this to your .env file and fill in your Google OAuth credentials
+
+# Get these from Google Cloud Console: https://console.cloud.google.com/
+# 1. Go to APIs & Services > Credentials
+# 2. Create OAuth 2.0 Client ID
+# 3. Set Application type to "Web application"
+# 4. Add authorized redirect URIs: http://localhost:9001/api/auth/google/callback
+
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:9001/api/auth/google/callback
+
+# For production, update the redirect URI:
+# GOOGLE_REDIRECT_URI=https://yourdomain.com/api/auth/google/callback

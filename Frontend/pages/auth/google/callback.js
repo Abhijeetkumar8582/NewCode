@@ -29,6 +29,7 @@ export default function GoogleCallback() {
         // If we have a code, exchange it for tokens via backend
         if (code) {
           try {
+            setStatus('exchanging');
             const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9001';
             const response = await fetch(`${API_BASE_URL}/api/auth/google/token?code=${encodeURIComponent(code)}`, {
               method: 'POST',
@@ -39,10 +40,15 @@ export default function GoogleCallback() {
 
             if (!response.ok) {
               const errorData = await response.json().catch(() => ({ detail: 'Failed to authenticate with Google' }));
-              throw new Error(errorData.detail || 'Failed to authenticate with Google');
+              console.error('Token exchange failed:', errorData);
+              throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
             }
 
             const data = await response.json();
+
+            if (!data.access_token || !data.session_token) {
+              throw new Error('Invalid response from authentication service');
+            }
             
             // Store tokens in localStorage
             if (typeof window !== 'undefined') {
@@ -163,7 +169,7 @@ export default function GoogleCallback() {
           maxWidth: '400px',
           width: '90%'
         }}>
-          {status === 'processing' && (
+          {(status === 'processing' || status === 'exchanging') && (
             <>
               <div style={{
                 width: '50px',
@@ -174,8 +180,15 @@ export default function GoogleCallback() {
                 animation: 'spin 1s linear infinite',
                 margin: '0 auto 1rem'
               }}></div>
-              <h2 style={{ margin: '0 0 0.5rem', color: '#333' }}>Authenticating...</h2>
-              <p style={{ color: '#666', margin: 0 }}>Please wait while we complete your Google sign-in.</p>
+              <h2 style={{ margin: '0 0 0.5rem', color: '#333' }}>
+                {status === 'processing' ? 'Authenticating...' : 'Completing Sign In...'}
+              </h2>
+              <p style={{ color: '#666', margin: 0 }}>
+                {status === 'processing'
+                  ? 'Please wait while we complete your Google sign-in.'
+                  : 'Exchanging authorization code for access tokens...'
+                }
+              </p>
             </>
           )}
 

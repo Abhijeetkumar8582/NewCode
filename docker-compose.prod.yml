@@ -1,0 +1,168 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: epiplex-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: video_processing
+      POSTGRES_USER: epiplex_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - epiplex-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U epiplex_user -d video_processing"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Cache (Optional but recommended for production)
+  redis:
+    image: redis:7-alpine
+    container_name: epiplex-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - epiplex-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: epiplex-backend
+    restart: unless-stopped
+    environment:
+      # Database
+      DATABASE_URL: postgresql+asyncpg://epiplex_user:${DB_PASSWORD}@db:5432/video_processing
+      # OpenAI
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # Server
+      DEBUG: false
+      HOST: 0.0.0.0
+      PORT: 9001
+      # CORS
+      CORS_ORIGINS: https://yourdomain.com,https://www.yourdomain.com
+      CORS_ALLOW_CREDENTIALS: true
+      # File Storage
+      UPLOAD_DIR: /app/uploads
+      AUDIO_DIR: /app/audio
+      MAX_FILE_SIZE: 524288000
+      # AWS S3 (if using)
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ap-south-1
+      # Auth
+      SECRET_KEY: ${SECRET_KEY}
+      # Encryption
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      # Google OAuth
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: https://yourdomain.com/api/auth/google/callback
+      # Logging
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      # Performance
+      MAX_WORKERS: 4
+      CACHE_ENABLED: true
+      METRICS_ENABLED: true
+    volumes:
+      - uploads_data:/app/uploads
+      - audio_data:/app/audio
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - epiplex-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:9001/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile
+    container_name: epiplex-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: https://yourdomain.com/api
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: 1
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - epiplex-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: epiplex-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - epiplex-network
+
+  # SSL Certificate Manager (Optional - for automatic SSL)
+  certbot:
+    image: certbot/certbot
+    container_name: epiplex-certbot
+    volumes:
+      - ./nginx/ssl:/etc/letsencrypt
+      - certbot_data:/var/lib/letsencrypt
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - epiplex-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  uploads_data:
+    driver: local
+  audio_data:
+    driver: local
+  nginx_logs:
+    driver: local
+  certbot_data:
+    driver: local
+
+networks:
+  epiplex-network:
+    driver: bridge

@@ -83,7 +83,7 @@ export default function Auth() {
   };
 
   const handleGoogleAuth = () => {
-    const redirectUri = typeof window !== 'undefined' ? `${window.location.origin}/auth` : '';
+    const redirectUri = typeof window !== 'undefined' ? `${window.location.origin}` : '';
     const googleAuthUrl = getGoogleAuthUrl(redirectUri);
     window.location.href = googleAuthUrl;
   };

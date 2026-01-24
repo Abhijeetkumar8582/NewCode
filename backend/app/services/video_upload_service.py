@@ -365,12 +365,12 @@ class VideoUploadService:
         
         if video_ids:
             # Query frame counts per video - use single optimized query
-            # Use CASE statement for SQL Server compatibility instead of .filter()
-            is_sql_server = "mssql" in settings.DATABASE_URL.lower()
-            
+            # Use CASE statement for SQL Server and MySQL compatibility instead of .filter()
+            from app.database import _is_mysql, _is_sql_server
+
             try:
-                if is_sql_server:
-                    # SQL Server compatible query using CASE
+                if _is_mysql or _is_sql_server:
+                    # MySQL/SQL Server compatible query using CASE
                     frame_stats_query = select(
                         FrameAnalysis.video_id,
                         func.count(FrameAnalysis.id).label('total_frames'),
