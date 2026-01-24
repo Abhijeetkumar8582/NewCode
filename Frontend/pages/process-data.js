@@ -2133,32 +2133,6 @@ export default function ProcessData() {
                     )}
                   </>
                 )}
-
-                {/* Separator - Only show when neither file nor URL is selected */}
-                {!formData.file && !formData.fileUrl && (
-                  <div className={styles.uploadSeparator}>
-                    <span>or</span>
-                  </div>
-                )}
-
-                {/* Import from URL - Hide when file is selected */}
-                {!formData.file && (
-                  <div className={styles.urlImportSection}>
-                    <label htmlFor="fileUrl" className={styles.label}>Import from URL</label>
-                    <div className={styles.urlInputGroup}>
-                      <input
-                        type="url"
-                        id="fileUrl"
-                        name="fileUrl"
-                        value={formData.fileUrl}
-                        onChange={handleUrlInputChange}
-                        className={styles.urlInput}
-                        placeholder="Add file URL"
-                      />
-                      <button type="button" className={styles.urlUploadButton}>Upload</button>
-                    </div>
-                  </div>
-                )}
               </div>
               <div className={styles.dialogFooter}>
                 <a href="#" className={styles.helpCenterLink}>
@@ -2176,10 +2150,10 @@ export default function ProcessData() {
                   <button
                     className={styles.startButton}
                     onClick={handleStart}
-                    disabled={isUploading || (uploadProgress > 0 && uploadProgress < 100) || (formData.files.length === 0 && !formData.fileUrl)}
+                    disabled={isUploading || (uploadProgress > 0 && uploadProgress < 100) || formData.files.length === 0}
                     style={{
-                      opacity: (isUploading || (uploadProgress > 0 && uploadProgress < 100) || (formData.files.length === 0 && !formData.fileUrl)) ? 0.5 : 1,
-                      cursor: (isUploading || (uploadProgress > 0 && uploadProgress < 100) || (formData.files.length === 0 && !formData.fileUrl)) ? 'not-allowed' : 'pointer'
+                      opacity: (isUploading || (uploadProgress > 0 && uploadProgress < 100) || formData.files.length === 0) ? 0.5 : 1,
+                      cursor: (isUploading || (uploadProgress > 0 && uploadProgress < 100) || formData.files.length === 0) ? 'not-allowed' : 'pointer'
                     }}
                   >
                     {isUploading && uploadProgress < 100 ? `Uploading... ${uploadProgress}%` : 'Save'}
