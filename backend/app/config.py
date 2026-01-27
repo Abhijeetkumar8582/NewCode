@@ -24,6 +24,11 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        "http://52.66.222.206",
+        "http://52.66.222.206:3000",
+        "http://52.66.222.206:80",
+        "https://52.66.222.206",
+        "https://52.66.222.206:443",
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: Union[str, List[str]] = ["*"]
@@ -70,7 +75,7 @@ class Settings(BaseSettings):
     # Note: GOOGLE_REDIRECT_URI must match EXACTLY what's configured in Google Cloud Console
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
-    GOOGLE_REDIRECT_URI: str = "http://localhost:9001/api/auth/google/callback"
+    GOOGLE_REDIRECT_URI: str = "http://52.66.222.206:9001/api/auth/google/callback"
     
     # Rate Limiting
     RATE_LIMIT_ENABLED: bool = True

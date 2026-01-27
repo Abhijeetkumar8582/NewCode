@@ -2,7 +2,7 @@ import axios from 'axios';
 import { clearAuthData } from './auth';
 import { RETRY_CONFIG } from './config';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9001';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://52.66.222.206:9001';
 
 // Global request limiter to prevent too many concurrent requests
 let activeRequestCount = 0;
