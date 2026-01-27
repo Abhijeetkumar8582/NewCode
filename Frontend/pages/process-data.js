@@ -143,9 +143,6 @@ export default function ProcessData() {
 
   // Memoize fetchVideos with useCallback to prevent unnecessary re-creations
   const fetchVideos = useCallback(async (page = currentPage, forceRefresh = false, silent = false) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:145',message:'fetchVideos called',data:{page,forceRefresh,silent,currentPage,filterStatus,filterFileName,hasInitialFetched:hasInitialFetchedRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     // Prevent duplicate concurrent calls with same parameters
     const cacheKey = getCacheKey(page, filterStatus, filterFileName);
     const fetchParams = { page, status: filterStatus, fileName: filterFileName };
@@ -387,9 +384,6 @@ export default function ProcessData() {
 
   // Initial mount effect - only run once on mount
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:386',message:'Initial mount effect running',data:{isInitialMount,hasInitialFetched:hasInitialFetchedRef.current,currentPage},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     // Log page view
     logPageView('Process Data');
     
@@ -427,9 +421,6 @@ export default function ProcessData() {
 
   // Refetch when filters change (skip initial mount) - reset to page 1
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:423',message:'Filter change effect running',data:{hasInitialFetched:hasInitialFetchedRef.current,hasMounted:hasMountedRef.current,filterStatus,filterFileName,prevStatus:prevFiltersRef.current.status,prevFileName:prevFiltersRef.current.fileName},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
     // Don't run until initial fetch is complete
     if (!hasInitialFetchedRef.current) {
       return;
@@ -469,9 +460,6 @@ export default function ProcessData() {
 
   // Refetch when page changes (skip initial mount) - use ref to track if mounted
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:456',message:'Page change effect running',data:{hasInitialFetched:hasInitialFetchedRef.current,hasMounted:hasMountedRef.current,currentPage},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
     // Don't run until initial fetch is complete
     if (!hasInitialFetchedRef.current) {
       return;
@@ -663,17 +651,10 @@ export default function ProcessData() {
     setIsDragging(false);
     const droppedFiles = Array.from(e.dataTransfer.files);
 
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:handleDrop',message:'Files dropped via drag and drop',data:{droppedFilesCount:droppedFiles.length,fileNames:droppedFiles.map(f=>f.name),fileSizes:droppedFiles.map(f=>f.size)},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_DRAG_DROP'})}).catch(()=>{});
-    // #endregion
-
     if (droppedFiles.length > 0) {
       // Just store the files in state - don't upload yet
       setFormData(prev => {
         const newFiles = [...(prev.files || []), ...droppedFiles];
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:handleDrop_update',message:'FormData updated with dropped files',data:{totalFilesInState:newFiles.length,fileNames:newFiles.map(f=>f.name)},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FORM_UPDATE'})}).catch(()=>{});
-        // #endregion
 
         return {
           ...prev,
@@ -689,17 +670,11 @@ export default function ProcessData() {
   const handleFileSelect = (e) => {
     const selectedFiles = Array.from(e.target.files);
 
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:handleFileSelect',message:'Files selected via file input',data:{selectedFilesCount:selectedFiles.length,fileNames:selectedFiles.map(f=>f.name),fileSizes:selectedFiles.map(f=>f.size)},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FILE_SELECT'})}).catch(()=>{});
-    // #endregion
 
     if (selectedFiles.length > 0) {
       // Just store the files in state - don't upload yet
       setFormData(prev => {
         const newFiles = [...(prev.files || []), ...selectedFiles];
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:handleFileSelect_update',message:'FormData updated with selected files',data:{totalFilesInState:newFiles.length,fileNames:newFiles.map(f=>f.name)},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FORM_UPDATE'})}).catch(()=>{});
-        // #endregion
 
         return {
           ...prev,
@@ -746,9 +721,6 @@ export default function ProcessData() {
       ? formData.files
       : (formData.file ? [formData.file] : []);
 
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:files_to_upload',message:'Files to upload detected',data:{totalFiles:filesToUpload.length,hasFormDataFiles:formData.files && formData.files.length > 0,formDataFilesLength:formData.files ? formData.files.length : 0,hasFormDataFile:!!formData.file,fileNames:filesToUpload.map(f=>f.name),fileSizes:filesToUpload.map(f=>f.size)},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FILES_DETECTED'})}).catch(()=>{});
-    // #endregion
     
     if (!formData.link && filesToUpload.length === 0 && !formData.fileUrl) {
       alert('Please select at least one file or provide a URL.');
@@ -773,18 +745,12 @@ export default function ProcessData() {
         setDialogOpen(false);
         
         // Upload all files in parallel first
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:upload_parallel',message:'Starting parallel upload of multiple files',data:{totalFiles:filesToUpload.length,fileNames:filesToUpload.map(f=>f.name),userName:formData.name},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_START'})}).catch(()=>{});
-        // #endregion
 
         const uploadPromises = filesToUpload.map(async (file, index) => {
           const fileName = filesToUpload.length > 1
             ? `${formData.name || 'Video'} ${index + 1}`
             : (formData.name || file.name);
 
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:upload_file',message:'Starting upload for individual file',data:{fileIndex:index,fileName:fileName,originalFileName:file.name,fileSize:file.size},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FILE_START'})}).catch(()=>{});
-          // #endregion
 
           try {
             const response = await uploadVideo(file, (progress) => {
@@ -797,9 +763,6 @@ export default function ProcessData() {
               priority: formData.priority || 'normal'
             });
 
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:upload_success',message:'File upload completed successfully',data:{fileIndex:index,fileName:fileName,responseId:response.data?.id,status:response.status},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FILE_SUCCESS'})}).catch(()=>{});
-            // #endregion
 
             // Log video upload (non-blocking)
             if (response.data && response.data.id) {
@@ -815,9 +778,6 @@ export default function ProcessData() {
 
             return { index, response, success: true };
           } catch (error) {
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:upload_error',message:'File upload failed',data:{fileIndex:index,fileName:fileName,error:error.message,errorCode:error.code},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_FILE_ERROR'})}).catch(()=>{});
-            // #endregion
 
             console.error(`Failed to upload file ${index + 1}:`, error);
             return { index, error, success: false };
@@ -827,9 +787,6 @@ export default function ProcessData() {
         // Wait for all uploads to complete
         const uploadResults = await Promise.all(uploadPromises);
 
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:upload_complete',message:'All parallel uploads completed',data:{totalResults:uploadResults.length,successCount:uploadResults.filter(r=>r.success).length,errorCount:uploadResults.filter(r=>!r.success).length,results:uploadResults.map(r=>({index:r.index,success:r.success,hasResponse:!!r.response}))},timestamp:Date.now(),sessionId:'debug-session',runId:'multi-upload-debug',hypothesisId:'MULTI_UPLOAD_COMPLETE'})}).catch(()=>{});
-        // #endregion
 
         // Show transfer progress after all uploads complete
         setTransferProgress(100);
@@ -1106,9 +1063,6 @@ export default function ProcessData() {
 
   // Check status and update only changed items (runs every 2 minutes)
   const checkStatusAndUpdate = useCallback(async () => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:1065',message:'checkStatusAndUpdate called',data:{page:currentPageForIntervalRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
     try {
       const page = currentPageForIntervalRef.current;
       
@@ -1287,9 +1241,6 @@ export default function ProcessData() {
   // 2-minute status check: runs every 2 minutes to check for status updates
   // Compares cookies with API response and only updates changed items
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:1242',message:'Status check effect running',data:{hasInitialFetched:hasInitialFetchedRef.current,currentPage,hasInterval:!!statusCheckIntervalRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
     // Only start interval after initial fetch is complete
     if (!hasInitialFetchedRef.current) {
       return;
@@ -1318,9 +1269,6 @@ export default function ProcessData() {
         statusCheckIntervalRef.current = null;
         }
       };
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'process-data.js:1289',message:'Status check effect dependencies changed',data:{currentPage,hasCheckStatusAndUpdate:!!checkStatusAndUpdate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
   }, [currentPage, checkStatusAndUpdate, hasInitialFetchedRef]);
 
   // Start unified polling for processing videos (separate from status check)

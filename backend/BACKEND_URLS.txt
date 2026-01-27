@@ -1,0 +1,54 @@
+Backend API URL Paths
+Base URL: http://52.66.222.206:9001
+
+ROOT & HEALTH
+GET  /
+GET  /health
+GET  /api/health
+GET  /metrics
+GET  /api/metrics
+
+AUTHENTICATION
+POST /api/auth/signup
+POST /api/auth/login
+GET  /api/auth/me
+GET  /api/auth/google
+GET  /api/auth/google/callback
+POST /api/auth/google/token
+
+VIDEO UPLOAD & MANAGEMENT
+POST   /api/upload
+GET    /api/uploads
+GET    /api/uploads/{upload_id}
+PATCH  /api/uploads/{upload_id}
+DELETE /api/uploads/{upload_id}
+POST   /api/uploads/bulk-delete
+POST   /api/uploads/{upload_id}/restore
+POST   /api/uploads/{upload_id}/retry
+
+VIDEO PANEL & LISTING
+GET /api/videos/panel
+
+VIDEO DETAILS & ANALYSIS
+GET /api/videos/{video_id}/frames
+GET /api/videos/{video_id}/transcript
+GET /api/videos/{video_id}/document
+GET /api/videos/file-number/{video_file_number}/status
+GET /api/videos/file-number/{video_file_number}/audio
+GET /api/videos/file-number/{video_file_number}/document
+
+ACTIVITY LOGS
+GET /api/activity-logs
+GET /api/activity-logs/{log_id}
+GET /api/activity-logs/stats
+GET /api/activity-logs/actions
+
+SETTINGS
+GET /api/settings/openai-key
+GET /api/settings/openai-key/check
+PUT /api/settings/openai-key
+
+API DOCUMENTATION
+GET /docs
+GET /redoc
+GET /openapi.json

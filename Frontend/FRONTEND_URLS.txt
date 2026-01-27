@@ -1,0 +1,45 @@
+Frontend URL Paths
+Base URL: http://52.66.222.206
+
+PUBLIC ROUTES (No Auth Required)
+GET  /
+GET  /auth
+GET  /auth?error={error}&message={message}
+GET  /auth/google/callback
+GET  /auth/google/callback?code={code}
+GET  /auth/google/callback?token={token}&session={session}
+GET  /auth/google/callback?error={error}
+
+PROTECTED ROUTES (Auth Required)
+GET  /dashboard
+GET  /process-data
+GET  /document
+GET  /document?video={video_file_number}
+GET  /activity-log
+GET  /account
+GET  /help
+
+ROUTE DESCRIPTIONS
+/                    - Home page (auto-redirects based on auth)
+/auth                - Login/Signup page
+/auth/google/callback - Google OAuth callback handler
+/dashboard           - Main dashboard with video statistics
+/process-data        - Video upload and processing management
+/document            - Document viewer (list or detail view)
+/activity-log        - User activity log viewer
+/account             - User account settings
+/help                - Help & Support page
+
+QUERY PARAMETERS
+/auth:
+  - error: Error type (e.g., oauth_failed)
+  - message: Error message to display
+
+/auth/google/callback:
+  - code: Authorization code from Google
+  - token: Direct access token
+  - session: Session token
+  - error: Error message
+
+/document:
+  - video: Video file number (e.g., VF-2024-0001)

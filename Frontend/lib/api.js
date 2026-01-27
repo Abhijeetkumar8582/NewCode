@@ -402,9 +402,6 @@ export const getVideoSummaries = async (videoId) => {
 };
 
 export const getDocument = async (videoFileNumber, includeImages = true) => {
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:372',message:'getDocument API call entry',data:{videoFileNumber,includeImages,url:`/api/videos/file-number/${videoFileNumber}/document`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-  // #endregion
   // By default, include images for display in document page
   // Set includeImages=false only when images are not needed (faster loading)
   try {
@@ -413,45 +410,27 @@ export const getDocument = async (videoFileNumber, includeImages = true) => {
       include_images: includeImages
     }
   });
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:380',message:'getDocument API call success',data:{status:response.status,hasData:!!response.data,dataKeys:response.data?Object.keys(response.data):[]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
     return response.data;
   } catch (error) {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:383',message:'getDocument API call error',data:{errorMessage:error.message,status:error.response?.status,errorData:error.response?.data},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     throw error;
   }
 };
 
 export const getDocumentByVideoId = async (videoId, includeImages = true) => {
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:391',message:'getDocumentByVideoId API call entry',data:{videoId,includeImages,url:`/api/videos/${videoId}/document`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-  // #endregion
   try {
     const response = await apiClient.get(`/api/videos/${videoId}/document`, {
       params: {
         include_images: includeImages
       }
     });
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:398',message:'getDocumentByVideoId API call success',data:{status:response.status,hasData:!!response.data,dataKeys:response.data?Object.keys(response.data):[],hasDetail:!!response.data?.detail},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
     // If response has 'detail' field, it's likely an error response (even if status is 200)
     if (response.data && response.data.detail) {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:403',message:'getDocumentByVideoId response has detail (error)',data:{detail:response.data.detail,status:response.status},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       const error = new Error(response.data.detail);
       error.response = { status: response.status || 404, data: response.data };
       throw error;
     }
   return response.data;
   } catch (error) {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.js:411',message:'getDocumentByVideoId API call error',data:{errorMessage:error.message,status:error.response?.status,errorData:error.response?.data},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     throw error;
   }
 };
