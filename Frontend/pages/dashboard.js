@@ -176,28 +176,59 @@ export default function Dashboard() {
   // Graph Cards Data from real stats (memoized)
   const graphCards = useMemo(() => videoStats ? [
     {
-      id: 'monthly-processing',
-      title: 'Monthly Processing',
-      value: (videoStats.currentMonthVideos || 0).toString(),
-      change: (videoStats.momGrowth || 0) >= 0 ? `+${videoStats.momGrowth || 0}% vs last month` : `${videoStats.momGrowth || 0}% vs last month`,
-      isPositive: (videoStats.momGrowth || 0) >= 0,
-      type: 'line',
-      data: videoStats.monthlyData ? Object.entries(videoStats.monthlyData).reverse().map(([key, value]) => ({
-        month: key,
-        count: value || 0
-      })) : []
+      id: 'pipeline-health',
+      title: 'Pipeline health',
+      value: (videoStats.totalVideos || 0).toString(),
+      change: `${(videoStats.successRate || 0).toFixed(1)}% success rate`,
+      isPositive: (videoStats.successRate || 0) >= 95,
+      type: 'status-bars',
+      data: (() => {
+        const sd = videoStats.statusDistribution || {};
+        const rows = [
+          { key: 'completed', label: 'Completed', color: '#22c55e', count: sd.completed ?? 0 },
+          { key: 'processing', label: 'Processing', color: '#3b82f6', count: sd.processing ?? 0 },
+          { key: 'uploaded', label: 'Uploaded', color: '#f59e0b', count: sd.uploaded ?? 0 },
+          { key: 'failed', label: 'Failed', color: '#ef4444', count: sd.failed ?? 0 },
+          { key: 'cancelled', label: 'Cancelled', color: '#9ca3af', count: sd.cancelled ?? 0 }
+        ];
+        if ((sd.other ?? 0) > 0) {
+          rows.push({ key: 'other', label: 'Other', color: '#64748b', count: sd.other });
+        }
+        return rows;
+      })()
     },
     {
       id: 'daily-processing',
-      title: 'Daily Processing (30 days)',
-      value: videoStats.dailyData ? Object.values(videoStats.dailyData).reduce((sum, val) => sum + (val || 0), 0).toString() : '0',
+      title: 'Daily Processing (last 7 days)',
+      value: videoStats.dailyData
+        ? Object.values(videoStats.dailyData)
+            .reduce((sum, val) => {
+              if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+                return sum + (val.total ?? 0);
+              }
+              return sum + (Number(val) || 0);
+            }, 0)
+            .toString()
+        : '0',
       change: `${videoStats.completedVideos || 0} completed videos`,
       isPositive: true,
       type: 'bar',
-      data: videoStats.dailyData ? Object.entries(videoStats.dailyData).reverse().slice(0, 30).map(([key, value]) => ({
-        date: key,
-        count: value || 0
-      })) : []
+      data: videoStats.dailyData
+        ? Object.entries(videoStats.dailyData)
+            .reverse()
+            .map(([key, value]) => {
+              if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                return {
+                  date: key,
+                  count: value.total ?? 0,
+                  success: value.completed ?? 0,
+                  failed: value.failed ?? 0
+                };
+              }
+              const n = Number(value) || 0;
+              return { date: key, count: n, success: n, failed: 0 };
+            })
+        : []
     }
   ] : [], [videoStats]);
 
@@ -222,8 +253,15 @@ export default function Dashboard() {
     if (!videoStats || !videoStats.monthlyData) return null;
     const entries = Object.entries(videoStats.monthlyData);
     if (entries.length === 0) return null;
-    const sorted = entries.sort((a, b) => b[1] - a[1]);
-    const [monthKey, count] = sorted[0];
+    const monthTotal = (val) => {
+      if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+        return val.total ?? ((val.completed || 0) + (val.failed || 0));
+      }
+      return Number(val) || 0;
+    };
+    const sorted = entries.sort((a, b) => monthTotal(b[1]) - monthTotal(a[1]));
+    const [monthKey, raw] = sorted[0];
+    const count = monthTotal(raw);
     const [year, month] = monthKey.split('-');
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return { month: monthNames[parseInt(month) - 1], count };
@@ -780,6 +818,10 @@ export default function Dashboard() {
                                   <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
                                   <polyline points="17 6 23 6 23 12"></polyline>
                                 </svg>
+                              ) : graph.type === 'status-bars' ? (
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" opacity="0.9">
+                                  <path d="M4 19h2M4 15h4M4 11h7M4 7h10M4 3h13" strokeLinecap="round" />
+                                </svg>
                               ) : (
                                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" opacity="0.9">
                                   <line x1="18" y1="20" x2="18" y2="10"></line>
@@ -789,8 +831,71 @@ export default function Dashboard() {
                               )}
                             </div>
                           </div>
-                          <div className={styles.graphPlaceholder}>
-                            {graph.type === 'line' && graph.data ? (
+                          <div
+                            className={
+                              graph.id === 'daily-processing'
+                                ? `${styles.graphPlaceholder} ${styles.graphPlaceholderDaily}`
+                                : graph.id === 'pipeline-health'
+                                  ? `${styles.graphPlaceholder} ${styles.graphPlaceholderPipeline}`
+                                  : styles.graphPlaceholder
+                            }
+                          >
+                            {graph.type === 'status-bars' && graph.data && graph.data.length > 0 ? (
+                              <svg width="100%" height="100%" viewBox="0 0 400 168" preserveAspectRatio="xMidYMid meet" className={styles.pipelineHealthSvg}>
+                                {(() => {
+                                  const rows = graph.data;
+                                  const maxVal = Math.max(...rows.map((r) => r.count), 1);
+                                  const labelX = 4;
+                                  const barX = 100;
+                                  const barMaxW = 230;
+                                  const rowH = 26;
+                                  return rows.map((row, i) => {
+                                    const y = 10 + i * rowH;
+                                    const w = maxVal > 0 ? (row.count / maxVal) * barMaxW : 0;
+                                    return (
+                                      <g key={row.key}>
+                                        <text
+                                          x={labelX}
+                                          y={y + 13}
+                                          fill="#374151"
+                                          fontSize="11"
+                                          fontWeight="600"
+                                        >
+                                          {row.label}
+                                        </text>
+                                        <rect
+                                          x={barX}
+                                          y={y + 4}
+                                          width={barMaxW}
+                                          height="14"
+                                          fill="#e5e7eb"
+                                          rx="4"
+                                        />
+                                        {row.count > 0 && (
+                                          <rect
+                                            x={barX}
+                                            y={y + 4}
+                                            width={Math.max(w, 2)}
+                                            height="14"
+                                            fill={row.color}
+                                            rx="4"
+                                          />
+                                        )}
+                                        <text
+                                          x={barX + barMaxW + 10}
+                                          y={y + 14}
+                                          fill="#111827"
+                                          fontSize="12"
+                                          fontWeight="700"
+                                        >
+                                          {row.count}
+                                        </text>
+                                      </g>
+                                    );
+                                  });
+                                })()}
+                              </svg>
+                            ) : graph.type === 'line' && graph.data ? (
                               <svg width="100%" height="160" viewBox="0 0 400 160" preserveAspectRatio="none">
                                 {(() => {
                                   const maxValue = Math.max(...graph.data.map(d => d.count), 1);
@@ -825,6 +930,87 @@ export default function Dashboard() {
                                   );
                                 })()}
                               </svg>
+                            ) : graph.type === 'bar' && graph.id === 'daily-processing' && graph.data && graph.data.length > 0 ? (
+                              <>
+                                <svg width="100%" height="132" viewBox="0 0 400 148" preserveAspectRatio="xMidYMid meet">
+                                  {(() => {
+                                    const rows = graph.data;
+                                    const maxStack = Math.max(
+                                      ...rows.map((d) => (d.success || 0) + (d.failed || 0)),
+                                      1
+                                    );
+                                    const n = rows.length;
+                                    const gap = 4;
+                                    const barSlot = 380 / n;
+                                    const barWidth = Math.max(6, barSlot - gap);
+                                    const chartH = 108;
+                                    const baseline = 128;
+                                    return rows.map((d, i) => {
+                                      const ok = d.success || 0;
+                                      const bad = d.failed || 0;
+                                      const hOk = (ok / maxStack) * chartH;
+                                      const hBad = (bad / maxStack) * chartH;
+                                      const x = 10 + i * barSlot + (barSlot - barWidth) / 2;
+                                      const yOk = baseline - hOk;
+                                      const yBad = baseline - hOk - hBad;
+                                      let label = d.date || '';
+                                      if (/^\d{4}-\d{2}-\d{2}$/.test(d.date)) {
+                                        const [yy, mm, dd] = d.date.split('-').map(Number);
+                                        const dt = new Date(yy, mm - 1, dd);
+                                        label = dt.toLocaleDateString('en-US', { weekday: 'short' });
+                                      }
+                                      return (
+                                        <g key={i}>
+                                          {hOk > 0 && (
+                                            <rect
+                                              x={x}
+                                              y={yOk}
+                                              width={barWidth}
+                                              height={hOk}
+                                              fill="#22c55e"
+                                              rx="3"
+                                              stroke="#16a34a"
+                                              strokeWidth="0.5"
+                                            />
+                                          )}
+                                          {hBad > 0 && (
+                                            <rect
+                                              x={x}
+                                              y={yBad}
+                                              width={barWidth}
+                                              height={hBad}
+                                              fill="#ef4444"
+                                              rx="3"
+                                              stroke="#dc2626"
+                                              strokeWidth="0.5"
+                                            />
+                                          )}
+                                          <text
+                                            x={x + barWidth / 2}
+                                            y="144"
+                                            textAnchor="middle"
+                                            fill="#6b7280"
+                                            fontSize="10"
+                                            fontWeight="600"
+                                          >
+                                            {label}
+                                          </text>
+                                        </g>
+                                      );
+                                    });
+                                  })()}
+                                </svg>
+                                <div className={styles.dailyBarLegend}>
+                                  <span className={styles.dailyBarLegendItem}>
+                                    <span className={styles.dailyBarSwatch} style={{ background: '#22c55e' }} />
+                                    Success
+                                  </span>
+                                  <span className={styles.dailyBarLegendItem}>
+                                    <span className={styles.dailyBarSwatch} style={{ background: '#ef4444' }} />
+                                    Failed
+                                  </span>
+                                </div>
+                              </>
                             ) : graph.type === 'bar' && graph.data ? (
                               <svg width="100%" height="160" viewBox="0 0 400 160" preserveAspectRatio="none">
                                 {(() => {

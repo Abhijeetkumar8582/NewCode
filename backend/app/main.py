@@ -2376,10 +2376,10 @@ async def get_video_document_by_id(
         logger.warning(f"documentation_data is not a list for video {upload.id}, converting")
         doc_data = [doc_data] if doc_data else []
     
-    # If include_images is False, remove image data from response
+    # If include_images is False, remove image data from response (legacy "image" and "Image" URLs)
     if not include_images:
         doc_data = [
-            {k: v for k, v in item.items() if k != "image"}
+            {k: v for k, v in item.items() if str(k).lower() != "image"}
             for item in doc_data
         ]
     
@@ -2405,7 +2405,6 @@ async def get_video_document_by_id(
         "video_id": str(upload.id),
         "video_file_number": upload.video_file_number,
         "documentation_data": doc_data,
-        "sprite_sheet_base64": documentation.sprite_sheet_base64 if include_images else None,
         "num_images": documentation.num_images,
         "created_at": documentation.created_at.isoformat() if documentation.created_at else None,
         "updated_at": documentation.updated_at.isoformat() if documentation.updated_at else None
@@ -2532,10 +2531,10 @@ async def get_video_document(
         logger.warning(f"documentation_data is not a list for video {upload.id}, converting")
         doc_data = [doc_data] if doc_data else []
     
-    # If include_images is False, remove image data from response
+    # If include_images is False, remove image data from response (legacy "image" and "Image" URLs)
     if not include_images:
         doc_data = [
-            {k: v for k, v in item.items() if k != "image"}
+            {k: v for k, v in item.items() if str(k).lower() != "image"}
             for item in doc_data
         ]
     
@@ -2561,7 +2560,6 @@ async def get_video_document(
         "video_id": str(upload.id),
         "video_file_number": video_file_number,
         "documentation_data": doc_data,
-        "sprite_sheet_base64": documentation.sprite_sheet_base64 if include_images else None,
         "num_images": documentation.num_images,
         "created_at": documentation.created_at.isoformat() if documentation.created_at else None,
         "updated_at": documentation.updated_at.isoformat() if documentation.updated_at else None

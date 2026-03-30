@@ -109,6 +109,14 @@ class Settings(BaseSettings):
     SYSTEM_MONITOR_INTERVAL_SECONDS: int = 30
     METRICS_PERCENTILES: List[float] = [0.5, 0.75, 0.9, 0.95, 0.99]
     
+    @field_validator('DATABASE_URL', mode='before')
+    @classmethod
+    def normalize_database_url(cls, v):
+        """Normalize mysql:// to mysql+aiomysql:// for async SQLAlchemy (avoids MySQLdb)"""
+        if isinstance(v, str) and v.strip().lower().startswith('mysql://'):
+            return v.replace('mysql://', 'mysql+aiomysql://', 1)
+        return v
+
     @field_validator('CORS_ORIGINS', mode='before')
     @classmethod
     def parse_cors_origins(cls, v):
@@ -129,7 +137,7 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [header.strip() for header in v.split(',') if header.strip()]
         return v
-    
+
     @field_validator('UPLOAD_DIR', mode='before')
     @classmethod
     def parse_upload_dir(cls, v):

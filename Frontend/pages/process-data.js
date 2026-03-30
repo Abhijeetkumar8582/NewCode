@@ -1770,7 +1770,7 @@ export default function ProcessData() {
                   <th>Last Activity</th>
                   <th>Recipients</th>
                   <th>Status</th>
-                  <th style={{ width: '150px', minWidth: '150px', maxWidth: '150px' }}></th>
+                  <th style={{ width: '200px', minWidth: '200px' }} aria-label="Actions"></th>
                 </tr>
               </thead>
               <tbody>
@@ -1807,7 +1807,7 @@ export default function ProcessData() {
                             </svg>
                           </div>
                           <div className={styles.documentNameInfo}>
-                            <div className={styles.documentName}>{item.name}</div>
+                            <div className={styles.documentName} title={item.name}>{item.name}</div>
                             <div className={styles.documentCreated}>Created: {item.created}</div>
                           </div>
                         </div>

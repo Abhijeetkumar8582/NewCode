@@ -572,13 +572,18 @@ export const getVideoStats = async () => {
     const framesWithGpt = videos.reduce((sum, v) => sum + (v.frames_with_gpt || 0), 0);
     const frameAnalysisRate = totalFrames > 0 ? ((framesWithGpt / totalFrames) * 100).toFixed(1) : 0;
     
-    // Status distribution
+    // Status distribution (mutually exclusive buckets for pipeline analytics)
+    const pipelineStatuses = ['completed', 'processing', 'uploaded', 'failed', 'cancelled'];
     const statusDistribution = {
-      completed: completedVideos,
-      processing: processingVideos,
-      failed: failedVideos,
-      cancelled: cancelledVideos,
-      uploaded: videos.filter(v => v.status === 'uploaded').length
+      completed: videos.filter(v => v.status === 'completed').length,
+      processing: videos.filter(v => v.status === 'processing').length,
+      uploaded: videos.filter(v => v.status === 'uploaded').length,
+      failed: videos.filter(v => v.status === 'failed').length,
+      cancelled: videos.filter(v => v.status === 'cancelled').length,
+      other: videos.filter(v => {
+        const s = v.status || '';
+        return s && !pipelineStatuses.includes(s);
+      }).length
     };
     
     // Application distribution
@@ -601,13 +606,13 @@ export const getVideoStats = async () => {
       normal: videos.filter(v => v.priority === 'normal' || !v.priority).length
     };
     
-    // Monthly processing (last 12 months)
+    // Monthly processing (last 12 months) — per month: total, completed (success), failed
     const monthlyData = {};
     const now = new Date();
     for (let i = 0; i < 12; i++) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      monthlyData[monthKey] = 0;
+      monthlyData[monthKey] = { total: 0, completed: 0, failed: 0 };
     }
     
     videos.forEach(v => {
@@ -615,18 +620,20 @@ export const getVideoStats = async () => {
         const date = new Date(v.created_at);
         const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
         if (monthlyData.hasOwnProperty(monthKey)) {
-          monthlyData[monthKey]++;
+          monthlyData[monthKey].total++;
+          if (v.status === 'completed') monthlyData[monthKey].completed++;
+          else if (v.status === 'failed') monthlyData[monthKey].failed++;
         }
       }
     });
     
-    // Daily processing (last 30 days)
+    // Daily processing (last 7 days) — per day: total, completed, failed
     const dailyData = {};
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 7; i++) {
       const date = new Date(now);
       date.setDate(date.getDate() - i);
       const dayKey = date.toISOString().split('T')[0];
-      dailyData[dayKey] = 0;
+      dailyData[dayKey] = { total: 0, completed: 0, failed: 0 };
     }
     
     videos.forEach(v => {
@@ -634,7 +641,9 @@ export const getVideoStats = async () => {
         const date = new Date(v.created_at);
         const dayKey = date.toISOString().split('T')[0];
         if (dailyData.hasOwnProperty(dayKey)) {
-          dailyData[dayKey]++;
+          dailyData[dayKey].total++;
+          if (v.status === 'completed') dailyData[dayKey].completed++;
+          else if (v.status === 'failed') dailyData[dayKey].failed++;
         }
       }
     });

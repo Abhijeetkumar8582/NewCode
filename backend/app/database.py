@@ -228,7 +228,8 @@ class VideoUpload(Base):
     updated_at = Column(TimestampType, nullable=False, server_default=func.now(), onupdate=func.now())
     
     # Link to job_status (optional, for processing tracking)
-    job_id = Column(String, nullable=True, index=True)
+    # MySQL requires VARCHAR length; use 255 to match job_status.job_id
+    job_id = Column(String(255), nullable=True, index=True)
     
     # Video file number - unique identifier for the video file (e.g., VF-2024-001)
     video_file_number = Column(String(50), nullable=True, unique=True, index=True)
@@ -313,10 +314,8 @@ class VideoDocumentation(Base):
     # Based on the database structure, the table has both id (primary key) and video_id (foreign key)
     id = Column(UUIDType, primary_key=True, default=uuid_default)
     video_id = Column(UUIDType, ForeignKey('video_uploads.id', ondelete='CASCADE'), nullable=False, index=True)
-    # For MySQL, documentation_data is LONGTEXT, so we use Text and parse JSON manually
-    # For other DBs, we can use JSONBType
-    documentation_data = Column(Text if _is_mysql else JSONBType, nullable=False)  # JSON array with image, description, step_number
-    sprite_sheet_base64 = Column(Text, nullable=True)  # Base64 encoded sprite sheet
+    # MySQL: LONGTEXT JSON array (Page/Image/Content, etc.); other DBs: JSONB
+    documentation_data = Column(Text if _is_mysql else JSONBType, nullable=False)
     num_images = Column(Integer, nullable=True)  # Number of images
     created_at = Column(TimestampType, nullable=False, server_default=func.now())
     updated_at = Column(TimestampType, nullable=False, server_default=func.now(), onupdate=func.now())

@@ -645,6 +645,7 @@
   padding: 40px;
   background-color: #f8f9fa;
   min-height: 100vh;
+  min-width: 0;
   transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -703,6 +704,13 @@
   border: 1px solid #e5e7eb;
   margin-top: 15px;
   position: relative;
+}
+
+/* Process Data: long file paths must not push actions off-screen when sidebar is expanded */
+.tableContainer:has(.processDataTable) {
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
 }
 
 .table {
@@ -1567,6 +1575,55 @@
   overflow: hidden;
   border: 1px solid #e5e7eb;
   flex: 1;
+}
+
+.graphPlaceholderPipeline {
+  height: auto;
+  min-height: 176px;
+  overflow: visible;
+  padding: 10px 12px 12px;
+}
+
+.pipelineHealthSvg {
+  display: block;
+  min-height: 160px;
+}
+
+.graphPlaceholderDaily {
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  min-height: 188px;
+  overflow: visible;
+  padding: 8px 8px 10px;
+  justify-content: flex-end;
+}
+
+.dailyBarLegend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid #e5e7eb;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.dailyBarLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dailyBarSwatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 
 /* Insight Cards Section */
@@ -2559,14 +2616,42 @@
   width: 100%;
   border-collapse: collapse;
   background-color: #ffffff;
-  table-layout: auto;
+  table-layout: fixed;
+}
+
+.processDataTable th:nth-child(1),
+.processDataTable td:nth-child(1) {
+  width: 40px;
+  max-width: 40px;
+  box-sizing: border-box;
+}
+
+.processDataTable th:nth-child(2),
+.processDataTable td:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.processDataTable .documentNameCell {
+  min-width: 0;
+}
+
+.processDataTable .documentNameInfo {
+  min-width: 0;
+  flex: 1;
+}
+
+.processDataTable .documentName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .processDataTable th:last-child,
 .processDataTable td:last-child {
-  width: 150px;
-  min-width: 150px;
-  max-width: 150px;
+  width: 200px;
+  min-width: 200px;
+  max-width: 200px;
   padding: 16px;
   padding-right: 16px;
   box-sizing: border-box;
@@ -2826,9 +2911,12 @@
   gap: 6px;
   justify-content: flex-end;
   width: 100%;
-  max-width: 140px;
   flex-wrap: nowrap;
   box-sizing: border-box;
+}
+
+.processDataTable .tableActions {
+  max-width: none;
 }
 
 .viewButton {
@@ -4933,36 +5021,65 @@
   margin-bottom: 0;
 }
 
-.spriteSheetSection {
-  margin-top: 32px;
-  padding-top: 32px;
-  border-top: 2px solid rgba(226, 232, 240, 0.8);
-}
-
-.spriteSheetTitle {
-  font-size: 20px;
+/* Sanitized HTML inside documentation Content (h2, lists, etc.) */
+.descriptionText :global(h1),
+.descriptionText :global(h2),
+.descriptionText :global(h3) {
   font-weight: 700;
+  color: #111827;
+  margin: 1.25em 0 0.65em;
+  line-height: 1.35;
+}
+
+.descriptionText :global(h1) {
+  font-size: 1.35rem;
+}
+
+.descriptionText :global(h2) {
+  font-size: 1.2rem;
+}
+
+.descriptionText :global(h3) {
+  font-size: 1.1rem;
+}
+
+.descriptionText :global(ol),
+.descriptionText :global(ul) {
+  margin: 0.65em 0 1em;
+  padding-left: 1.5em;
+}
+
+.descriptionText :global(li) {
+  margin: 0.4em 0;
+}
+
+.descriptionText :global(ol) {
+  list-style-type: decimal;
+}
+
+.descriptionText :global(ul) {
+  list-style-type: disc;
+}
+
+.descriptionText :global(strong) {
+  font-weight: 600;
   color: #1f2937;
-  margin: 0 0 16px 0;
 }
 
-.spriteSheetImage {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background: #f9fafb;
-  border-radius: 12px;
-  padding: 16px;
-  border: 1px solid rgba(226, 232, 240, 0.6);
+.descriptionText :global(a) {
+  color: #4f46e5;
+  text-decoration: underline;
 }
 
-.spriteSheetImage img {
-  transition: transform 0.3s ease;
+.descriptionText :global(code) {
+  font-size: 0.9em;
+  background: #f3f4f6;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
 }
 
-.spriteSheetImage img:hover {
-  transform: scale(1.02);
+.descriptionText :global(p:first-child) {
+  margin-top: 0;
 }
 
 /* Responsive Documentation */

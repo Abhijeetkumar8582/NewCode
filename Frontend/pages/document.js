@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import DOMPurify from 'isomorphic-dompurify';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
 import Layout from '../components/Layout';
@@ -9,6 +10,69 @@ import { getVideosPanel, getDocument, getDocumentByVideoId, bulkDeleteUploads, g
 import dataCache, { CACHE_DURATION } from '../lib/dataCache';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9001';
+
+/** video_documentation.documentation JSON: { Page, Image, Content } and/or legacy { step_number, image, description } */
+function normalizeDocumentationSteps(rawList) {
+  if (!Array.isArray(rawList)) return [];
+  return rawList.map((step, index) => {
+    const stepNumber = step.Page ?? step.page ?? step.step_number ?? index + 1;
+    const description = step.Content ?? step.content ?? step.description ?? '';
+    const image = step.Image ?? step.image ?? step.base64_image ?? null;
+    return { ...step, step_number: stepNumber, description, image };
+  });
+}
+
+function documentationImageSrc(image) {
+  if (!image || typeof image !== 'string') return null;
+  const t = image.trim();
+  if (t.startsWith('http://') || t.startsWith('https://')) return t;
+  if (t.startsWith('data:')) return t;
+  return `data:image/jpeg;base64,${t}`;
+}
+
+/** ?video= can be video_file_number (string) or upload UUID (matches video_documentation.video_id / video_uploads.id) */
+const VIDEO_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseVideoRouteParam(raw) {
+  if (raw == null || raw === '') return { videoId: null, videoFileNumber: null };
+  const s = (Array.isArray(raw) ? raw[0] : String(raw)).trim();
+  if (!s) return { videoId: null, videoFileNumber: null };
+  if (VIDEO_UUID_RE.test(s)) return { videoId: s, videoFileNumber: null };
+  return { videoId: null, videoFileNumber: s };
+}
+
+function documentationContentLooksLikeHtml(text) {
+  if (!text || typeof text !== 'string') return false;
+  return /<[a-z][\s\S]*>/i.test(text.trim());
+}
+
+/** Renders stored documentation as HTML when it contains tags; otherwise plain text with line breaks. */
+function DocumentationDescriptionContent({ text, className }) {
+  const isHtml = useMemo(() => documentationContentLooksLikeHtml(text), [text]);
+  const safeHtml = useMemo(() => {
+    if (!isHtml || !text) return '';
+    return DOMPurify.sanitize(text, { USE_PROFILES: { html: true } });
+  }, [text, isHtml]);
+
+  if (!text) return null;
+  if (isHtml) {
+    return (
+      <div className={className} dangerouslySetInnerHTML={{ __html: safeHtml }} />
+    );
+  }
+  return (
+    <div className={className}>
+      {text.split('\n').map((paragraph, pIndex) =>
+        paragraph.trim() ? (
+          <p key={pIndex} style={{ marginBottom: '1em', lineHeight: '1.6' }}>
+            {paragraph}
+          </p>
+        ) : null
+      )}
+    </div>
+  );
+}
 
 export default function Document() {
   const router = useRouter();
@@ -86,37 +150,47 @@ export default function Document() {
     }
   }, [selectedItems, videos]);
 
-  // Handle query parameter to open specific document
+  // Handle query parameter to open specific document (?video=file-number or ?video=upload-uuid)
   useEffect(() => {
-    const videoFileNumber = router.query.video;
-    
-    if (videoFileNumber) {
-      // Clear previous data immediately when video parameter changes
-      setDocumentData(null);
-      setSummaries([]);
-      setSelectedDocument(null);
-      
-      // Always fetch fresh data when video parameter changes
-      const fetchVideoData = async () => {
-        // Try to find video in current videos list first
-        let video = null;
-        if (videos && videos.length > 0) {
-          video = videos.find(v => v.video_file_number === videoFileNumber);
+    const raw = router.query.video;
+    if (!raw) return;
+
+    const { videoId: qVid, videoFileNumber: qVfn } = parseVideoRouteParam(raw);
+
+    setDocumentData(null);
+    setSummaries([]);
+    setSelectedDocument(null);
+
+    const fetchVideoData = async () => {
+      let video = null;
+      if (videos && videos.length > 0) {
+        if (qVfn) {
+          video = videos.find((v) => v.video_file_number === qVfn);
         }
-        
-        // If video found in list, use it; otherwise create temp object
-        const documentToLoad = video || {
-          id: null,
-          video_file_number: videoFileNumber,
-          name: 'Loading...'
-        };
-        
-        // Always force fresh fetch
-        await handleRowClick(documentToLoad, true);
-      };
-      
-      fetchVideoData();
-    }
+        if (!video && qVid) {
+          video = videos.find((v) => v.id === qVid || v.video_id === qVid);
+        }
+      }
+
+      const documentToLoad =
+        video ||
+        (qVid
+          ? {
+              id: qVid,
+              video_id: qVid,
+              video_file_number: null,
+              name: 'Loading...',
+            }
+          : {
+              id: null,
+              video_file_number: qVfn,
+              name: 'Loading...',
+            });
+
+      await handleRowClick(documentToLoad, true);
+    };
+
+    fetchVideoData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query.video]);
 
@@ -351,7 +425,7 @@ export default function Document() {
         setSummariesLoading(false);
       
           // Update selected document with cached data
-      setSelectedDocument(prev => {
+        setSelectedDocument(prev => {
             if (prev && prev.video_file_number === videoFileNumber && cachedData) {
               const frames = cachedData.frames || [];
           return {
@@ -373,7 +447,7 @@ export default function Document() {
                   timestamp: formatTimestamp(frame.timestamp),
                   description: frame.description || 'Step description',
                   metaTags: ['documentation', 'step'],
-                  imageDataUrl: frame.base64_image ? `data:image/jpeg;base64,${frame.base64_image}` : null
+                  imageDataUrl: documentationImageSrc(frame.image)
                 }))
           };
         }
@@ -403,26 +477,30 @@ export default function Document() {
       // Verify the data matches the requested video
       const dataVideoNumber = data?.video_file_number;
       if (data && dataVideoNumber === videoFileNumber) {
-        // Transform documentation_data to frames format for compatibility
-        const frames = (data.documentation_data && Array.isArray(data.documentation_data))
-          ? data.documentation_data.map((step, index) => ({
-              frame_id: step.step_number || index + 1,
-              step_number: step.step_number || index + 1,
-              timestamp: (step.step_number || index + 1) * 1.0, // Approximate timestamp based on step number
-              description: step.description || '',
-              base64_image: step.image || null,
-              image: step.image || null,
-              ocr_text: null, // Not available in new format
-              gpt_response: null // Not available in new format
-            }))
-          : [];
-        
-        // Create a transformed data object for compatibility
+        const rawDoc =
+          data.documentation_data && Array.isArray(data.documentation_data)
+            ? data.documentation_data
+            : [];
+        const documentationNormalized = normalizeDocumentationSteps(rawDoc);
+        const frames = documentationNormalized.map((step, index) => {
+          const img = step.image;
+          const isHttp = typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://'));
+          return {
+            frame_id: step.step_number || index + 1,
+            step_number: step.step_number || index + 1,
+            timestamp: (step.step_number || index + 1) * 1.0,
+            description: step.description || '',
+            base64_image: img && !isHttp ? img : null,
+            image: img || null,
+            ocr_text: null,
+            gpt_response: null,
+          };
+        });
+
         const transformedData = {
           ...data,
-          frames: frames,
-          // For backward compatibility, also keep documentation_data
-          documentation_data: data.documentation_data || []
+          frames,
+          documentation_data: documentationNormalized,
         };
         
         console.log('Setting document data:', {
@@ -468,7 +546,7 @@ export default function Document() {
                     timestamp: formatTimestamp(frame.timestamp),
                   description: frame.description || 'Step description',
                   metaTags: ['documentation', 'step'],
-                  imageDataUrl: frame.base64_image ? `data:image/jpeg;base64,${frame.base64_image}` : null
+                  imageDataUrl: documentationImageSrc(frame.image)
                 }))
           };
         }
@@ -548,24 +626,27 @@ export default function Document() {
       }
       
       if (data && data.documentation_data) {
-        // Transform documentation_data to frames format for compatibility
-        const frames = (data.documentation_data && Array.isArray(data.documentation_data))
-          ? data.documentation_data.map((step, index) => ({
-              frame_id: step.step_number || index + 1,
-              step_number: step.step_number || index + 1,
-              timestamp: (step.step_number || index + 1) * 1.0,
-              description: step.description || '',
-              base64_image: step.image || null,
-              image: step.image || null,
-              ocr_text: null,
-              gpt_response: null
-            }))
-          : [];
-        
+        const rawDoc = Array.isArray(data.documentation_data) ? data.documentation_data : [];
+        const documentationNormalized = normalizeDocumentationSteps(rawDoc);
+        const frames = documentationNormalized.map((step, index) => {
+          const img = step.image;
+          const isHttp = typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://'));
+          return {
+            frame_id: step.step_number || index + 1,
+            step_number: step.step_number || index + 1,
+            timestamp: (step.step_number || index + 1) * 1.0,
+            description: step.description || '',
+            base64_image: img && !isHttp ? img : null,
+            image: img || null,
+            ocr_text: null,
+            gpt_response: null,
+          };
+        });
+
         const transformedData = {
           ...data,
-          frames: frames,
-          documentation_data: data.documentation_data || []
+          frames,
+          documentation_data: documentationNormalized,
         };
         
         // #region agent log
@@ -601,31 +682,39 @@ export default function Document() {
     setSummaries([]);
     setSelectedDocument(document);
     // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:404',message:'setSelectedDocument called',data:{videoFileNumber:document?.video_file_number},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:404',message:'setSelectedDocument called',data:{videoFileNumber:document?.video_file_number,videoId:document?.video_id||document?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
     // #endregion
     setDetailViewOpen(true);
     setActiveTab('transcribe'); // Reset to first tab when opening
-    
-    // Log document view
-    if (document && document.video_file_number) {
-      logDocumentView(document.video_file_number, {
-        video_id: document.id,
-        name: document.name || 'Unknown'
+
+    const videoFileNumber = document.video_file_number;
+    const videoId = document.video_id || document.id;
+
+    if (videoFileNumber) {
+      logDocumentView(videoFileNumber, {
+        video_id: document.id ?? document.video_id,
+        name: document.name || 'Unknown',
       });
-      
-      console.log('Fetching fresh document data for:', document.video_file_number, 'forceRefresh:', forceRefresh);
-      
-      // Always fetch fresh document data (force refresh by default)
-      await fetchDocumentData(document.video_file_number, forceRefresh);
-      
-      // Summaries are included in documentData response, they will be extracted when documentData loads
+      console.log('Fetching fresh document data for:', videoFileNumber, 'forceRefresh:', forceRefresh);
+      await fetchDocumentData(videoFileNumber, forceRefresh);
       console.log('[handleRowClick] Summaries will be extracted from documentData when it loads');
+    } else if (videoId) {
+      logDocumentView(String(videoId), {
+        video_id: videoId,
+        name: document.name || 'Unknown',
+      });
+      console.log(
+        '[handleRowClick] No video_file_number; fetching documentation by video_id:',
+        videoId,
+        'forceRefresh:',
+        forceRefresh
+      );
+      await fetchDocumentDataByVideoId(videoId, forceRefresh);
     } else {
-      // If no video_file_number, set empty data
       setDocumentData(null);
       setSummaries([]);
     }
-  }, [fetchDocumentData]);
+  }, [fetchDocumentData, fetchDocumentDataByVideoId]);
 
   // Process documentData when it loads (new format uses documentation_data)
   useEffect(() => {
@@ -1362,8 +1451,9 @@ export default function Document() {
                   >
                     <div className={styles.documentationContainer}>
                       {(() => {
-                        // Get documentation data
-                        const docData = documentData?.documentation_data || documentData?.frames || [];
+                        const docData = normalizeDocumentationSteps(
+                          documentData?.documentation_data || documentData?.frames || []
+                        );
                         // #region agent log
                         fetch('http://127.0.0.1:7243/ingest/de7026f9-1d05-470c-8f09-5c0f5e04f9b0',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document.js:1077',message:'Documentation tab render',data:{hasDocumentData:!!documentData,docDataLength:docData.length,hasDocDataProp:!!documentData?.documentation_data,hasFramesProp:!!documentData?.frames,activeTab},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
                         // #endregion
@@ -1383,7 +1473,7 @@ export default function Document() {
                             <div className={styles.documentationHeader}>
                               <h3 className={styles.documentationTitle}>Video Documentation</h3>
                               <p className={styles.documentationSubtitle}>
-                                {docData.length} step{docData.length !== 1 ? 's' : ''} documented
+                                {docData.length} page{docData.length !== 1 ? 's' : ''} documented
                               </p>
                             </div>
                             
@@ -1391,23 +1481,14 @@ export default function Document() {
                               {docData.map((step, index) => {
                                 const stepNumber = step.step_number || index + 1;
                                 const description = step.description || 'No description available';
-                                const image = step.image || step.base64_image;
-                                
-                                // Construct base64 image data URL
-                                let imageDataUrl = null;
-                                if (image) {
-                                  if (image.startsWith('data:')) {
-                                    imageDataUrl = image;
-                                  } else {
-                                    imageDataUrl = `data:image/jpeg;base64,${image}`;
-                                  }
-                                }
-                                
+                                const image = step.image ?? step.Image ?? step.base64_image;
+                                const imageDataUrl = documentationImageSrc(image);
+
                                 return (
                                   <div key={`doc-step-${stepNumber}-${index}`} className={styles.documentationStepCard}>
                                     <div className={styles.documentationStepHeader}>
                                       <div className={styles.documentationStepNumber}>
-                                        <span className={styles.stepNumberBadge}>Step {stepNumber}</span>
+                                        <span className={styles.stepNumberBadge}>Page {stepNumber}</span>
                                       </div>
                                     </div>
                                     
@@ -1416,7 +1497,7 @@ export default function Document() {
                                         <div className={styles.documentationStepImage}>
                                           <img 
                                             src={imageDataUrl}
-                                            alt={`Documentation step ${stepNumber}`}
+                                            alt={`Documentation page ${stepNumber}`}
                                             style={{
                                               width: '100%',
                                               height: 'auto',
@@ -1468,75 +1549,16 @@ export default function Document() {
                                       )}
                                       
                                       <div className={styles.documentationStepDescription}>
-                                        <div className={styles.descriptionText}>
-                                          {description.split('\n').map((paragraph, pIndex) => (
-                                            paragraph.trim() ? (
-                                              <p key={pIndex} style={{ marginBottom: '1em', lineHeight: '1.6' }}>
-                                                {paragraph}
-                                              </p>
-                                            ) : null
-                                          ))}
-                                        </div>
+                                        <DocumentationDescriptionContent
+                                          text={description}
+                                          className={styles.descriptionText}
+                                        />
                                       </div>
                                     </div>
                                   </div>
                                 );
                               })}
                             </div>
-                            
-                            {/* Show sprite sheet if available */}
-                            {documentData?.sprite_sheet_base64 && (
-                              <div className={styles.spriteSheetSection}>
-                                <h4 className={styles.spriteSheetTitle}>Sprite Sheet</h4>
-                                <div className={styles.spriteSheetImage}>
-                                  <img 
-                                    src={`data:image/jpeg;base64,${documentData.sprite_sheet_base64}`}
-                                    alt="Sprite sheet"
-                                    style={{
-                                      width: '100%',
-                                      height: 'auto',
-                                      maxHeight: '500px',
-                                      objectFit: 'contain',
-                                      borderRadius: '8px',
-                                      border: '1px solid #e0e0e0',
-                                      cursor: 'pointer'
-                                    }}
-                                    onClick={() => {
-                                      const newWindow = window.open();
-                                      if (newWindow) {
-                                        newWindow.document.write(`
-                                          <html>
-                                            <head>
-                                              <title>Sprite Sheet</title>
-                                              <style>
-                                                body { 
-                                                  margin: 0; 
-                                                  padding: 20px; 
-                                                  background: #f5f5f5; 
-                                                  display: flex; 
-                                                  justify-content: center; 
-                                                  align-items: center; 
-                                                  min-height: 100vh;
-                                                }
-                                                img { 
-                                                  max-width: 100%; 
-                                                  height: auto; 
-                                                  border-radius: 8px;
-                                                  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                                                }
-                                              </style>
-                                            </head>
-                                            <body>
-                                              <img src="data:image/jpeg;base64,${documentData.sprite_sheet_base64}" alt="Sprite Sheet" />
-                                            </body>
-                                          </html>
-                                        `);
-                                      }
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            )}
                           </div>
                         );
                       })()}
